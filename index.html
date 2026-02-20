@@ -49,6 +49,12 @@
                 <p>💡 Stand back so the camera can see your whole body!</p>
             </div>
 
+            <!-- Privacy notice -->
+            <div class="privacy-notice" id="privacy-notice">
+                <span class="privacy-icon">🔒</span>
+                <span class="privacy-text">All camera images and photos stay on YOUR device. Nothing is uploaded or shared online.</span>
+            </div>
+
             <button id="btn-play" class="btn-big btn-play btn-disabled" onclick="startGame()" disabled>
                 ⏳ Getting Ready…
             </button>
@@ -56,6 +62,7 @@
                 <span class="badge">👥 1–4 Players</span>
                 <span class="badge">📷 Uses Camera</span>
                 <span class="badge">🎂 Ages 3–5</span>
+                <span class="badge">🔒 100% Local</span>
             </div>
         </div>
     </div>
@@ -139,6 +146,12 @@
         <div class="statue-flash hidden" id="statue-flash">
             <div class="statue-flash-text">✨ STATUE! ✨</div>
         </div>
+
+        <!-- Combo overlay -->
+        <div class="combo-overlay hidden" id="combo-overlay">
+            <div class="combo-label">⚡ COMBO ⚡</div>
+            <div class="combo-count">2 IN A ROW!</div>
+        </div>
     </div>
 
     <!-- ===== VICTORY SCREEN ===== -->
@@ -154,6 +167,16 @@
                 <span style="--d:.6s">⭐</span>
             </div>
             <div id="final-scores" class="final-scores"></div>
+
+            <!-- Replay slideshow -->
+            <div id="replay-slideshow" class="replay-slideshow hidden">
+                <div class="replay-frame">
+                    <img class="replay-img" src="" alt="">
+                    <div class="replay-label"></div>
+                    <div class="replay-counter"></div>
+                </div>
+            </div>
+
             <p class="victory-msg">You're a Magic Statue Champion!</p>
             <div id="photo-gallery" class="photo-gallery hidden"></div>
             <button class="btn-big btn-play" onclick="restartGame()">🔄 Play Again!</button>

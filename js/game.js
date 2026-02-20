@@ -196,6 +196,9 @@ const S = {
     playerScores: [0,0,0,0],
     poseStartTime: 0,
     poseTimerId: null,
+    streak: 0,
+    bestStreak: 0,
+    replayTimerId: null,
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -268,6 +271,8 @@ async function startGame() {
     S.poseIdx = 0;
     S.screenshots = [];
     S.playerScores = [0,0,0,0];
+    S.streak = 0;
+    S.bestStreak = 0;
 
     showScreen('screen-game');
     buildProgressDots();
@@ -282,6 +287,8 @@ function restartGame() {
     S.smoothScore = 0;
     S.screenshots = [];
     S.playerScores = [0,0,0,0];
+    S.streak = 0;
+    S.bestStreak = 0;
     narrate('Let\'s play again! Get ready!');
     showScreen('screen-game');
     buildProgressDots();
@@ -519,30 +526,49 @@ async function poseCompleted() {
     // Capture screenshot before celebration effects
     captureScreenshot();
 
-    // Award points to players
+    // Streak tracking
+    S.streak++;
+    if (S.streak > S.bestStreak) S.bestStreak = S.streak;
+
+    // Award points to players (with streak multiplier)
     awardPoints();
 
     // flash
     const flash = $('statue-flash');
     flash.style.animation = 'none'; void flash.offsetWidth; flash.style.animation = '';
     show(flash);
-    playChord();
+
+    // Silly sound effect on success
+    playSillySound();
     spawnConfetti(120);
 
-    // Narrator celebration
-    const cheers = [
-        'Amazing! You did it!',
-        'Wow, great job! You are a star!',
-        'Fantastic! That was perfect!',
-        'Hooray! You nailed it!',
-        'Superstar! That was awesome!',
-    ];
+    // Streak combo announcement
+    let cheers;
+    if (S.streak >= 5) {
+        cheers = ['UNSTOPPABLE! ' + S.streak + ' in a row!', 'MEGA COMBO! ' + S.streak + ' poses! WOW!'];
+        spawnConfetti(200);
+    } else if (S.streak >= 3) {
+        cheers = [S.streak + ' in a row! COMBO! Amazing!', 'Streak of ' + S.streak + '! You\'re on fire!'];
+        spawnConfetti(80);
+    } else {
+        cheers = [
+            'Amazing! You did it!',
+            'Wow, great job! You are a star!',
+            'Fantastic! That was perfect!',
+            'Hooray! You nailed it!',
+            'Superstar! That was awesome!',
+        ];
+    }
     narrate(cheers[Math.floor(Math.random()*cheers.length)]);
+
+    // Show combo overlay if streak >= 2
+    showCombo();
 
     markDotDone(S.poseIdx);
     updateScoreboard();
     await wait(CFG.celebrateMs);
     hide(flash);
+    hideCombo();
 
     S.poseIdx++;
     if (S.poseIdx >= S.poseOrder.length) {
@@ -557,8 +583,9 @@ async function poseTimedOut() {
     cancelLoop();
     clearPoseTimer();
 
+    S.streak = 0; // reset streak on timeout
+    playFailSound();
     narrate('Time\'s up! Let\'s try the next one!');
-    playTone(220, .3);
     markDotDone(S.poseIdx);
     await wait(2000);
 
@@ -609,14 +636,16 @@ function awardPoints() {
     const elapsed = performance.now() - S.poseStartTime;
     // Time bonus: faster = more points (max 100, min 10)
     const timeBonus = Math.max(10, Math.round(100 * (1 - elapsed / CFG.poseTimeLimit)));
+    // Streak multiplier: 1x, 1x, 1.5x, 2x, 2.5x, 3x...
+    const streakMult = S.streak >= 3 ? 1 + (S.streak - 2) * 0.5 : 1;
 
     if (pose.multiPlayer) {
         // All detected players share the points equally
-        for (let i = 0; i < count; i++) S.playerScores[i] += timeBonus;
+        for (let i = 0; i < count; i++) S.playerScores[i] += Math.round(timeBonus * streakMult);
     } else {
         for (let i = 0; i < count; i++) {
             const score = checkPose(poses[i].keypoints, pose.id);
-            const pts = Math.round(timeBonus * Math.max(score, 0.5));
+            const pts = Math.round(timeBonus * Math.max(score, 0.5) * streakMult);
             S.playerScores[i] += pts;
         }
     }
@@ -671,9 +700,13 @@ function showVictory() {
     spawnConfetti(200);
     showScreen('screen-victory');
     playChord(); setTimeout(()=>playChord(),400);
-    narrate('You did ALL the poses! You are a Magic Statue Champion! Great job everyone!');
+    const streakMsg = S.bestStreak >= 3 ? ' Best streak: ' + S.bestStreak + ' in a row!' : '';
+    narrate('You did ALL the poses! You are a Magic Statue Champion!' + streakMsg);
     buildFinalScores();
-    buildGallery();
+    // Start replay slideshow, then show gallery after
+    startReplaySlideshow(() => {
+        buildGallery();
+    });
 }
 
 // ─── MAIN GAME LOOP ──────────────────────────
@@ -1547,6 +1580,117 @@ function playChord(){
     setTimeout(()=>playTone(1047,.4), 150);
 }
 
+// ─── SILLY SOUND EFFECTS ──────────────────────
+function playSillySound(){
+    const sounds = [playSfxBoing, playSfxPop, playSfxWhoosh, playSfxTaDa, playSfxSparkle];
+    sounds[Math.floor(Math.random()*sounds.length)]();
+}
+
+function playSfxBoing(){
+    const a=S.audioCtx; if(!a) return;
+    if(a.state==='suspended') a.resume();
+    const osc=a.createOscillator(), g=a.createGain();
+    osc.connect(g); g.connect(a.destination);
+    osc.type='sine';
+    osc.frequency.setValueAtTime(150, a.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, a.currentTime+0.15);
+    osc.frequency.exponentialRampToValueAtTime(200, a.currentTime+0.3);
+    g.gain.setValueAtTime(0.25, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, a.currentTime+0.4);
+    osc.start(a.currentTime); osc.stop(a.currentTime+0.4);
+}
+
+function playSfxPop(){
+    const a=S.audioCtx; if(!a) return;
+    if(a.state==='suspended') a.resume();
+    const osc=a.createOscillator(), g=a.createGain();
+    osc.connect(g); g.connect(a.destination);
+    osc.type='sine';
+    osc.frequency.setValueAtTime(900, a.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, a.currentTime+0.1);
+    g.gain.setValueAtTime(0.3, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, a.currentTime+0.15);
+    osc.start(a.currentTime); osc.stop(a.currentTime+0.15);
+    // second pop
+    setTimeout(()=>{
+        const o2=a.createOscillator(), g2=a.createGain();
+        o2.connect(g2); g2.connect(a.destination);
+        o2.type='sine';
+        o2.frequency.setValueAtTime(1200, a.currentTime);
+        o2.frequency.exponentialRampToValueAtTime(400, a.currentTime+0.1);
+        g2.gain.setValueAtTime(0.2, a.currentTime);
+        g2.gain.exponentialRampToValueAtTime(0.001, a.currentTime+0.12);
+        o2.start(a.currentTime); o2.stop(a.currentTime+0.12);
+    }, 80);
+}
+
+function playSfxWhoosh(){
+    const a=S.audioCtx; if(!a) return;
+    if(a.state==='suspended') a.resume();
+    // Noise burst via oscillator
+    const osc=a.createOscillator(), g=a.createGain();
+    const filter=a.createBiquadFilter();
+    osc.connect(filter); filter.connect(g); g.connect(a.destination);
+    osc.type='sawtooth';
+    filter.type='bandpass';
+    filter.frequency.setValueAtTime(1000, a.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(4000, a.currentTime+0.15);
+    filter.frequency.exponentialRampToValueAtTime(500, a.currentTime+0.3);
+    filter.Q.value=0.5;
+    osc.frequency.setValueAtTime(100, a.currentTime);
+    g.gain.setValueAtTime(0.12, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, a.currentTime+0.35);
+    osc.start(a.currentTime); osc.stop(a.currentTime+0.35);
+    // Chime at end
+    setTimeout(()=>playTone(1047, 0.2), 200);
+}
+
+function playSfxTaDa(){
+    playTone(523,.2); 
+    setTimeout(()=>playTone(659,.2), 120);
+    setTimeout(()=>{ playTone(784,.35); playTone(1047,.35); }, 250);
+}
+
+function playSfxSparkle(){
+    const notes=[1047,1319,1568,2093];
+    notes.forEach((f,i)=>{
+        setTimeout(()=>playTone(f, 0.15), i*70);
+    });
+}
+
+function playFailSound(){
+    const a=S.audioCtx; if(!a) return;
+    if(a.state==='suspended') a.resume();
+    // Sad trombone: descending notes
+    const notes=[392, 370, 349, 293];
+    notes.forEach((f,i)=>{
+        setTimeout(()=>{
+            const osc=a.createOscillator(), g=a.createGain();
+            osc.connect(g); g.connect(a.destination);
+            osc.type='triangle';
+            osc.frequency.value=f;
+            g.gain.setValueAtTime(0.15, a.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, a.currentTime+(i===3?0.5:0.25));
+            osc.start(a.currentTime); osc.stop(a.currentTime+(i===3?0.5:0.25));
+        }, i*200);
+    });
+}
+
+// ─── COMBO OVERLAY ────────────────────────────
+function showCombo(){
+    const el=$('combo-overlay');
+    if(!el || S.streak < 2) return;
+    const mult = S.streak >= 3 ? ' (' + (1+(S.streak-2)*0.5).toFixed(1) + 'x)' : '';
+    el.querySelector('.combo-count').textContent = S.streak + ' IN A ROW!' + mult;
+    el.querySelector('.combo-label').textContent = S.streak >= 5 ? '🔥 MEGA COMBO 🔥' : S.streak >= 3 ? '⚡ COMBO ⚡' : '✨ NICE ✨';
+    el.style.animation='none'; void el.offsetWidth; el.style.animation='';
+    show(el);
+}
+function hideCombo(){
+    const el=$('combo-overlay');
+    if(el) hide(el);
+}
+
 // ─── NARRATOR (Web Speech Synthesis) ─────────
 let narratorVoice = null;
 let narratorTimeout = null;
@@ -1749,6 +1893,143 @@ function buildGallery() {
         card.appendChild(label);
         grid.appendChild(card);
     });
+
+    // Download collage button
+    if (S.screenshots.length >= 2) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-big btn-collage';
+        btn.textContent = '\ud83d\udcf8 Save Photo Collage!';
+        btn.onclick = downloadCollage;
+        el.appendChild(btn);
+    }
+}
+
+// ─── REPLAY SLIDESHOW ─────────────────────────
+function startReplaySlideshow(onComplete) {
+    if (!S.screenshots.length) { if (onComplete) onComplete(); return; }
+    const el = $('replay-slideshow');
+    if (!el) { if (onComplete) onComplete(); return; }
+
+    const imgEl = el.querySelector('.replay-img');
+    const labelEl = el.querySelector('.replay-label');
+    const counterEl = el.querySelector('.replay-counter');
+    show(el);
+    let idx = 0;
+
+    function showSlide() {
+        if (idx >= S.screenshots.length) {
+            hide(el);
+            if (onComplete) onComplete();
+            return;
+        }
+        const shot = S.screenshots[idx];
+        imgEl.src = shot.image;
+        imgEl.alt = shot.pose.name;
+        labelEl.textContent = shot.pose.emoji + ' ' + shot.pose.name;
+        counterEl.textContent = (idx+1) + ' / ' + S.screenshots.length;
+        imgEl.style.animation = 'none'; void imgEl.offsetWidth; imgEl.style.animation = '';
+        playSfxSparkle();
+        idx++;
+        S.replayTimerId = setTimeout(showSlide, 1400);
+    }
+    showSlide();
+}
+
+// ─── SHAREABLE PHOTO COLLAGE ──────────────────
+function downloadCollage() {
+    if (!S.screenshots.length) return;
+    const shots = S.screenshots;
+    const cols = Math.min(shots.length, 4);
+    const rows = Math.ceil(shots.length / cols);
+    const thumbW = 320, thumbH = 240;
+    const pad = 12, headerH = 80, footerH = 50;
+    const cW = cols * thumbW + (cols+1) * pad;
+    const cH = headerH + rows * thumbH + (rows+1) * pad + footerH;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = cW; canvas.height = cH;
+    const ctx = canvas.getContext('2d');
+
+    // Background gradient
+    const grad = ctx.createLinearGradient(0,0,cW,cH);
+    grad.addColorStop(0, '#667eea');
+    grad.addColorStop(1, '#764ba2');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, cW, cH);
+
+    // Header
+    ctx.fillStyle = '#FFD93D';
+    ctx.font = 'bold 36px Fredoka One, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2728 Magic Statue Champion! \u2728', cW/2, headerH/2 + 14);
+
+    // Load and draw images
+    let loaded = 0;
+    const images = [];
+    shots.forEach((shot, i) => {
+        const img = new Image();
+        img.onload = () => {
+            loaded++;
+            images[i] = img;
+            if (loaded === shots.length) drawCollageImages();
+        };
+        img.onerror = () => {
+            loaded++;
+            if (loaded === shots.length) drawCollageImages();
+        };
+        img.src = shot.image;
+    });
+
+    function drawCollageImages() {
+        shots.forEach((shot, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = pad + col * (thumbW + pad);
+            const y = headerH + pad + row * (thumbH + pad);
+
+            // Rounded rect clip
+            const r = 14;
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(x+r, y);
+            ctx.lineTo(x+thumbW-r, y);
+            ctx.quadraticCurveTo(x+thumbW, y, x+thumbW, y+r);
+            ctx.lineTo(x+thumbW, y+thumbH-r);
+            ctx.quadraticCurveTo(x+thumbW, y+thumbH, x+thumbW-r, y+thumbH);
+            ctx.lineTo(x+r, y+thumbH);
+            ctx.quadraticCurveTo(x, y+thumbH, x, y+thumbH-r);
+            ctx.lineTo(x, y+r);
+            ctx.quadraticCurveTo(x, y, x+r, y);
+            ctx.clip();
+
+            if (images[i]) ctx.drawImage(images[i], x, y, thumbW, thumbH);
+            ctx.restore();
+
+            // Label
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillRect(x, y+thumbH-30, thumbW, 30);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 14px Nunito, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(shot.pose.emoji + ' ' + shot.pose.name, x+thumbW/2, y+thumbH-10);
+        });
+
+        // Footer with score
+        const count = Math.max(S.playersFound, 1);
+        const maxScore = Math.max(...S.playerScores.slice(0, count));
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.font = 'bold 18px Nunito, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('\ud83c\udfc6 Score: ' + maxScore + ' pts | Best Streak: ' + S.bestStreak, cW/2, cH - footerH/2 + 6);
+
+        // Download
+        try {
+            const link = document.createElement('a');
+            link.download = 'magic-statue-champion.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        } catch(e) { console.warn('Collage download failed:', e); }
+    }
 }
 
 // ─── SVG POSE ILLUSTRATIONS ──────────────────

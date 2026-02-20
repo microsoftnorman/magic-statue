@@ -109,6 +109,29 @@ html, body {
     max-width: 440px;
 }
 
+/* Privacy notice */
+.privacy-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(107, 203, 119, .18);
+    border: 1.5px solid rgba(107, 203, 119, .45);
+    border-radius: 14px;
+    padding: 10px 18px;
+    font-size: clamp(.78rem, 2vw, .95rem);
+    backdrop-filter: blur(4px);
+    max-width: 480px;
+    text-align: left;
+    line-height: 1.4;
+}
+.privacy-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+.privacy-text {
+    opacity: .92;
+}
+
 /* Disabled button */
 .btn-disabled {
     opacity: .5;
@@ -612,6 +635,93 @@ html, body {
     padding: 6px 10px;
     font-size: clamp(.7rem, 1.8vw, .95rem);
     text-align: center;
+}
+
+/* Collage download button */
+.btn-collage {
+    background: linear-gradient(135deg, #4ECDC4, #44A08D);
+    box-shadow: 0 4px 0 #2d7a6e, 0 6px 16px rgba(0,0,0,.2);
+    font-size: clamp(1rem, 2.5vw, 1.4rem) !important;
+    padding: 14px 36px !important;
+    margin-top: 16px;
+}
+
+/* Combo overlay */
+.combo-overlay {
+    position: absolute; inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 60px;
+    z-index: 9;
+    pointer-events: none;
+    animation: comboPopIn .5s ease-out;
+}
+.combo-label {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.5rem, 5vw, 2.5rem);
+    color: #FFD93D;
+    text-shadow: 0 0 20px rgba(255,217,61,.6), 0 2px 8px rgba(0,0,0,.5);
+    animation: comboPulse .6s ease-in-out infinite;
+}
+.combo-count {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1rem, 3vw, 1.6rem);
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.5);
+    margin-top: 4px;
+}
+@keyframes comboPopIn {
+    from { transform: scale(2) rotate(-5deg); opacity: 0; }
+    to   { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+@keyframes comboPulse {
+    0%,100% { transform: scale(1); }
+    50%     { transform: scale(1.1); }
+}
+
+/* Replay slideshow */
+.replay-slideshow {
+    width: 100%;
+    max-width: 500px;
+    margin: 10px auto;
+}
+.replay-frame {
+    position: relative;
+    border-radius: 18px;
+    overflow: hidden;
+    background: rgba(0,0,0,.3);
+    box-shadow: 0 6px 25px rgba(0,0,0,.4);
+}
+.replay-img {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    display: block;
+    animation: replayFade .4s ease-out;
+}
+.replay-label {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,.55);
+    padding: 8px 14px;
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1rem, 2.5vw, 1.3rem);
+    text-align: center;
+}
+.replay-counter {
+    position: absolute;
+    top: 10px; right: 14px;
+    background: rgba(0,0,0,.5);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: .85rem;
+    backdrop-filter: blur(4px);
+}
+@keyframes replayFade {
+    from { opacity: 0; transform: scale(1.05); }
+    to   { opacity: 1; transform: scale(1); }
 }
 
 /* Error screen */
