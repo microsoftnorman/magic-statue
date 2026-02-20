@@ -132,12 +132,6 @@ const POSES = [
         multiPlayer: true,
     },
     {
-        id:'group_hug', name:'Group Hug!', emoji:'🤗',
-        instruction:'Get close and HUG your friends!',
-        color:'#FF7043',
-        multiPlayer: true,
-    },
-    {
         id:'mirror_pose', name:'Mirror Mirror!', emoji:'🪞',
         instruction:'Face your partner and copy each other with arms OUT!',
         color:'#26C6DA',
@@ -962,7 +956,6 @@ function checkMultiPose(allPoses, id) {
     switch (id) {
         case 'high_five':     return checkHighFive(valid);
         case 'hold_hands':    return checkHoldHands(valid);
-        case 'group_hug':     return checkGroupHug(valid);
         case 'mirror_pose':   return checkMirrorPose(valid);
         case 'back_to_back':  return checkBackToBack(valid);
         case 'wave_together': return checkWaveTogether(valid);
@@ -1367,66 +1360,6 @@ function checkHoldHandsPair(kp1,kp2){
     n++;if(Math.abs(bw1.y-bw2.y)<body*1.5)s++;
     const s1=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:200;
     n++;if(bw1.y>s1-20)s++;
-    return n?s/n:0;
-}
-
-function checkGroupHug(allPoses){
-    if(allPoses.length<2) return 0;
-    let s=0, n=0;
-    // Get body centers (shoulder midpoints) for each person
-    const bodies=allPoses.map(p=>{
-        const l=p.keypoints[5],r=p.keypoints[6];
-        const lh=p.keypoints[11],rh=p.keypoints[12];
-        if(!kpOk(l)||!kpOk(r)) return null;
-        return {
-            cx:(l.x+r.x)/2,
-            cy:(l.y+r.y)/2,
-            w:Math.abs(l.x-r.x),
-            hipY:(kpOk(lh)&&kpOk(rh))?(lh.y+rh.y)/2:l.y+100,
-            kp:p.keypoints
-        };
-    }).filter(v=>v!==null);
-    if(bodies.length<2) return 0;
-
-    // Estimate average body width for scaling
-    const avgBody=bodies.reduce((a,b)=>a+b.w,0)/bodies.length || 100;
-
-    // 1) Players are close together (centers within ~3 body widths)
-    let totalDist=0, pairs=0;
-    for(let i=0;i<bodies.length;i++)
-        for(let j=i+1;j<bodies.length;j++){
-            totalDist+=Math.abs(bodies[i].cx-bodies[j].cx); pairs++;
-        }
-    const avgDist=totalDist/pairs;
-    n++; if(avgDist<avgBody*6) s+=0.5;
-    n++; if(avgDist<avgBody*4) s++;
-
-    // 2) At least one pair of wrists crosses between players (arms reaching toward each other)
-    let crossCount=0;
-    for(let i=0;i<bodies.length;i++)
-        for(let j=i+1;j<bodies.length;j++){
-            const kpA=bodies[i].kp, kpB=bodies[j].kp;
-            const wrists=[[kpA[9],kpA[10]],[kpB[9],kpB[10]]];
-            for(const wa of wrists[0].filter(kpOk))
-                for(const wb of wrists[1].filter(kpOk)){
-                    const d=Math.hypot(wa.x-wb.x,wa.y-wb.y);
-                    if(d<avgBody*4) crossCount++;
-                }
-        }
-    n++; if(crossCount>0) s++;
-
-    // 3) Arms are NOT straight at sides (reaching out = hugging)
-    for(let i=0;i<bodies.length;i++){
-        const kp=bodies[i].kp;
-        const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
-        if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
-            const wristSpread=Math.abs(lw.x-rw.x);
-            const shoulderW=Math.abs(ls.x-rs.x);
-            // In a hug, wrists are typically near or past shoulders (arms out)
-            n++; if(wristSpread > shoulderW*0.8) s++;
-        }
-    }
-
     return n?s/n:0;
 }
 
@@ -2291,11 +2224,26 @@ function getPoseSVG(id){
         </svg>`,
 
         jumping_jacks: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(100,95,40,20)}${limb(100,95,160,20)}
-            ${limb(100,95,100,175)}
-            ${limb(100,175,40,268,'#FF6B9D')}${limb(100,175,160,268,'#FF6B9D')}
-            ${head(100,58)}${hand(40,20)}${hand(160,20)}
-            ${foot(40,272)}${foot(160,272)}
+            <style>
+                @keyframes jjArmsUp{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-45deg)}}
+                @keyframes jjArmsUp2{0%,100%{transform:rotate(0deg)}50%{transform:rotate(45deg)}}
+                @keyframes jjLegsOut{0%,100%{transform:rotate(0deg)}50%{transform:rotate(15deg)}}
+                @keyframes jjLegsOut2{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-15deg)}}
+                @keyframes jjBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+                .jj-larm{animation:jjArmsUp .8s ease-in-out infinite;transform-origin:100px 95px}
+                .jj-rarm{animation:jjArmsUp2 .8s ease-in-out infinite;transform-origin:100px 95px}
+                .jj-lleg{animation:jjLegsOut .8s ease-in-out infinite;transform-origin:100px 175px}
+                .jj-rleg{animation:jjLegsOut2 .8s ease-in-out infinite;transform-origin:100px 175px}
+                .jj-body{animation:jjBounce .8s ease-in-out infinite}
+            </style>
+            <g class="jj-body">
+                ${limb(100,95,100,175)}
+                ${head(100,58)}
+            </g>
+            <g class="jj-larm">${limb(100,95,40,20)}${hand(40,20)}</g>
+            <g class="jj-rarm">${limb(100,95,160,20)}${hand(160,20)}</g>
+            <g class="jj-lleg">${limb(100,175,40,268,'#FF6B9D')}${foot(40,272)}</g>
+            <g class="jj-rleg">${limb(100,175,160,268,'#FF6B9D')}${foot(160,272)}</g>
             <text x="100" y="16" text-anchor="middle" font-size="16">🎉</text>
         </svg>`,
 
@@ -2328,12 +2276,26 @@ function getPoseSVG(id){
         </svg>`,
 
         run_pose: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(100,95,55,55)}${limb(100,95,150,120)}
-            ${limb(100,95,100,175)}
-            ${limb(100,175,70,210,'#FF6B9D')}${limb(70,210,80,260,'#FF6B9D')}
-            ${limb(100,175,130,260,'#FF6B9D')}
-            ${head(100,58)}${hand(55,55)}${hand(150,120)}
-            ${foot(80,264)}${foot(130,264)}
+            <style>
+                @keyframes runArm1{0%,100%{transform:rotate(-20deg)}50%{transform:rotate(20deg)}}
+                @keyframes runArm2{0%,100%{transform:rotate(20deg)}50%{transform:rotate(-20deg)}}
+                @keyframes runLeg1{0%,100%{transform:rotate(15deg)}50%{transform:rotate(-15deg)}}
+                @keyframes runLeg2{0%,100%{transform:rotate(-15deg)}50%{transform:rotate(15deg)}}
+                @keyframes runBob{0%,100%{transform:translateY(0)}25%{transform:translateY(-5px)}50%{transform:translateY(0)}75%{transform:translateY(-5px)}}
+                .run-larm{animation:runArm1 .6s ease-in-out infinite;transform-origin:100px 95px}
+                .run-rarm{animation:runArm2 .6s ease-in-out infinite;transform-origin:100px 95px}
+                .run-lleg{animation:runLeg1 .6s ease-in-out infinite;transform-origin:100px 175px}
+                .run-rleg{animation:runLeg2 .6s ease-in-out infinite;transform-origin:100px 175px}
+                .run-body{animation:runBob .6s ease-in-out infinite}
+            </style>
+            <g class="run-body">
+                ${limb(100,95,100,175)}
+                ${head(100,58)}
+            </g>
+            <g class="run-larm">${limb(100,95,55,55)}${hand(55,55)}</g>
+            <g class="run-rarm">${limb(100,95,150,120)}${hand(150,120)}</g>
+            <g class="run-lleg">${limb(100,175,70,210,'#FF6B9D')}${limb(70,210,80,260,'#FF6B9D')}${foot(80,264)}</g>
+            <g class="run-rleg">${limb(100,175,130,260,'#FF6B9D')}${foot(130,264)}</g>
         </svg>`,
 
         high_five: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
@@ -2362,26 +2324,20 @@ function getPoseSVG(id){
             <text x="160" y="130" text-anchor="middle" font-size="18">💕</text>
         </svg>`,
 
-        group_hug: `<svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(100,100,60,70)}${limb(100,100,170,110)}
-            ${limb(100,100,100,180)}
-            ${limb(100,180,78,264,'#FF6B9D')}${limb(100,180,122,264,'#FF6B9D')}
-            ${head(100,62)}${hand(60,70)}${foot(78,268)}${foot(122,268)}
-            ${limb(180,100,220,70,'#4ECDC4')}${limb(180,100,110,110,'#4ECDC4')}
-            ${limb(180,100,180,180,'#4ECDC4')}
-            ${limb(180,180,158,264,'#FF6B9D')}${limb(180,180,202,264,'#FF6B9D')}
-            ${head(180,62)}${hand(220,70)}${foot(158,268)}${foot(202,268)}
-            ${hand(170,110)}${hand(110,110)}
-            <text x="140" y="48" text-anchor="middle" font-size="22">🤗</text>
-        </svg>`,
-
         wave_hello: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(100,95,145,20)}${limb(100,95,55,120)}
+            <style>
+                @keyframes waveSwing{0%,100%{transform:rotate(-15deg)}50%{transform:rotate(15deg)}}
+                .wave-arm{animation:waveSwing .5s ease-in-out infinite;transform-origin:145px 50px}
+            </style>
+            ${limb(100,95,55,120)}
             ${limb(100,95,100,175)}
             ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
-            ${head(100,58)}${hand(145,20)}${hand(55,120)}
+            ${head(100,58)}${hand(55,120)}
             ${foot(78,264)}${foot(122,264)}
-            <text x="155" y="16" text-anchor="middle" font-size="18">👋</text>
+            <g class="wave-arm">
+                ${limb(100,95,145,20)}${hand(145,20)}
+                <text x="155" y="16" text-anchor="middle" font-size="18">👋</text>
+            </g>
         </svg>`,
 
         tree_pose: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
@@ -2422,12 +2378,22 @@ function getPoseSVG(id){
         </svg>`,
 
         disco: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(100,95,145,15)}${limb(100,95,55,200)}
-            ${limb(100,95,100,175)}
-            ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
-            ${head(100,58)}${hand(145,15)}${hand(55,200)}
-            ${foot(78,264)}${foot(122,264)}
-            <text x="148" y="12" text-anchor="middle" font-size="18">🕺</text>
+            <style>
+                @keyframes discoArm1{0%{transform:rotate(0deg)}25%{transform:rotate(-30deg)}50%{transform:rotate(0deg)}75%{transform:rotate(30deg)}100%{transform:rotate(0deg)}}
+                @keyframes discoArm2{0%{transform:rotate(0deg)}25%{transform:rotate(30deg)}50%{transform:rotate(0deg)}75%{transform:rotate(-30deg)}100%{transform:rotate(0deg)}}
+                @keyframes discoHip{0%,100%{transform:rotate(0deg)}25%{transform:rotate(5deg)}75%{transform:rotate(-5deg)}}
+                .disco-larm{animation:discoArm1 .9s ease-in-out infinite;transform-origin:100px 95px}
+                .disco-rarm{animation:discoArm2 .9s ease-in-out infinite;transform-origin:100px 95px}
+                .disco-body{animation:discoHip .9s ease-in-out infinite;transform-origin:100px 175px}
+            </style>
+            <g class="disco-body">
+                ${limb(100,95,100,175)}
+                ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
+                ${foot(78,264)}${foot(122,264)}
+            </g>
+            ${head(100,58)}
+            <g class="disco-larm">${limb(100,95,145,15)}${hand(145,15)}<text x="148" y="12" text-anchor="middle" font-size="18">🕺</text></g>
+            <g class="disco-rarm">${limb(100,95,55,200)}${hand(55,200)}</g>
         </svg>`,
 
         mirror_pose: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
@@ -2455,14 +2421,22 @@ function getPoseSVG(id){
         </svg>`,
 
         wave_together: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
-            ${limb(80,100,40,20)}${limb(80,100,30,100)}
+            <style>
+                @keyframes wtWave1{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}
+                @keyframes wtWave2{0%,100%{transform:rotate(12deg)}50%{transform:rotate(-12deg)}}
+                .wt-arm1{animation:wtWave1 .5s ease-in-out infinite;transform-origin:40px 50px}
+                .wt-arm2{animation:wtWave2 .5s ease-in-out infinite;transform-origin:280px 50px}
+            </style>
+            <g class="wt-arm1">${limb(80,100,40,20)}${hand(40,20)}</g>
+            ${limb(80,100,30,100)}
             ${limb(80,100,80,180)}
             ${limb(80,180,58,264,'#FF6B9D')}${limb(80,180,102,264,'#FF6B9D')}
-            ${head(80,62)}${hand(40,20)}${hand(30,100)}${foot(58,268)}${foot(102,268)}
-            ${limb(240,100,280,20,'#4ECDC4')}${limb(240,100,290,100,'#4ECDC4')}
+            ${head(80,62)}${hand(30,100)}${foot(58,268)}${foot(102,268)}
+            <g class="wt-arm2">${limb(240,100,280,20,'#4ECDC4')}${hand(280,20)}</g>
+            ${limb(240,100,290,100,'#4ECDC4')}
             ${limb(240,100,240,180,'#4ECDC4')}
             ${limb(240,180,218,264,'#FF6B9D')}${limb(240,180,262,264,'#FF6B9D')}
-            ${head(240,62)}${hand(280,20)}${hand(290,100)}${foot(218,268)}${foot(262,268)}
+            ${head(240,62)}${hand(290,100)}${foot(218,268)}${foot(262,268)}
             <text x="160" y="18" text-anchor="middle" font-size="18">👐</text>
         </svg>`,
 
