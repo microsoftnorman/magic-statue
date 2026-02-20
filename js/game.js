@@ -205,6 +205,7 @@ const S = {
     lastFrameTime: 0,
     mediaRecorder: null,
     recordedChunks: [],
+    autoCountdownId: null,
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -268,6 +269,9 @@ function pickPoses() {
 
 async function startGame() {
     if (!S.ready) return;
+    // Clear auto-countdown if running
+    if (S.autoCountdownId) { clearInterval(S.autoCountdownId); S.autoCountdownId = null; }
+    hide($('auto-countdown'));
     cancelTitlePreview();
 
     narrate('Here we go! Get ready to play Magic Statue!');
@@ -327,8 +331,35 @@ function checkReady() {
         btn.disabled = false;
         btn.classList.remove('btn-disabled');
         btn.textContent = '▶ PLAY!';
-        narrate('I can see ' + S.playersFound + ' player' + (S.playersFound>1?'s':'') + '! Press Play when you\'re ready!');
+        // Auto-start countdown instead of waiting for button press
+        startAutoCountdown();
     }
+}
+
+function startAutoCountdown() {
+    const el = $('auto-countdown');
+    const textEl = $('auto-countdown-text');
+    if (!el || !textEl) { startGame(); return; }
+    show(el);
+    narrate('I can see you! Anyone else want to play? Jump in front of the camera!');
+    let sec = 5;
+    textEl.textContent = 'Starting in ' + sec + '…';
+    S.autoCountdownId = setInterval(() => {
+        sec--;
+        if (sec > 0) {
+            textEl.textContent = 'Starting in ' + sec + '…';
+            if (sec === 3) {
+                narrate(S.playersFound > 1
+                    ? S.playersFound + ' players ready! Here we go!'
+                    : 'Last chance to join!');
+            }
+        } else {
+            clearInterval(S.autoCountdownId);
+            S.autoCountdownId = null;
+            hide(el);
+            startGame();
+        }
+    }, 1000);
 }
 
 // ─── CAMERA ───────────────────────────────────

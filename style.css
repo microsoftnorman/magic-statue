@@ -197,6 +197,22 @@ html, body {
     animation: btnPulse 2s ease-in-out infinite;
 }
 
+/* Auto-countdown on title screen */
+.auto-countdown {
+    margin: 12px 0 4px;
+}
+.auto-countdown-text {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.4rem, 4vw, 2rem);
+    color: #FFD93D;
+    text-shadow: 0 2px 8px rgba(0,0,0,.4);
+    animation: countdownPulse 1s ease-in-out infinite;
+}
+@keyframes countdownPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
 .title-badges {
     display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
 }
