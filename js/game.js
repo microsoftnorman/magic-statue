@@ -59,8 +59,9 @@ const POSES = [
     },
     {
         id:'jumping_jacks', name:'Jumping Jacks!', emoji:'🤸',
-        instruction:'Arms UP high and legs OUT wide!',
+        instruction:'Do jumping jacks! Arms UP and legs OUT!',
         color:'#FF4081',
+        active: true,
     },
     {
         id:'hands_on_head', name:'Hands on Head!', emoji:'🙆',
@@ -79,13 +80,15 @@ const POSES = [
     },
     {
         id:'run_pose', name:'Run in Place!', emoji:'🏃',
-        instruction:'Lift one knee UP high like you\'re running!',
+        instruction:'Run run run! Lift those knees UP high!',
         color:'#FF5722',
+        active: true,
     },
     {
         id:'wave_hello', name:'Wave Hello!', emoji:'👋',
-        instruction:'Wave one hand UP high above your head!',
+        instruction:'Wave your hand UP high! Say hello!',
         color:'#AB47BC',
+        active: true,
     },
     {
         id:'tree_pose', name:'Tree Pose!', emoji:'🌳',
@@ -109,8 +112,9 @@ const POSES = [
     },
     {
         id:'disco', name:'Disco!', emoji:'🕺',
-        instruction:'Point one arm UP to the sky and one DOWN!',
+        instruction:'Dance! Point one arm UP and one DOWN!',
         color:'#FDD835',
+        active: true,
     },
     // --- Multiplayer poses (2+ players) ---
     {
@@ -148,6 +152,7 @@ const POSES = [
         instruction:'Both wave your hands UP high at the same time!',
         color:'#FFB74D',
         multiPlayer: true,
+        active: true,
     },
     {
         id:'side_by_side', name:'Side by Side!', emoji:'🤜🤛',
@@ -495,7 +500,9 @@ function beginMatching() {
     hide($('hold-overlay'));
     hide($('statue-flash'));
     const pose = currentPose();
-    if (pose.multiPlayer) {
+    if (pose.active) {
+        narrate(pose.multiPlayer ? 'Do this one together! Keep moving!' : 'Keep moving! You can do it!');
+    } else if (pose.multiPlayer) {
         narrate('Do this one together! Work as a team!');
     } else {
         narrate('Now copy the pose! You can do it!');
@@ -779,13 +786,15 @@ function updateLogic() {
             S.holdStart = performance.now();
             show($('hold-overlay'));
             playTone(440, .1);
-            narrate('Hold it! Freeze like a statue!');
+            const isActive = currentPose().active;
+            narrate(isActive ? 'Great! Keep going!' : 'Hold it! Freeze like a statue!');
         }
         if (S.phase === 'holding') {
             const elapsed = performance.now() - S.holdStart;
+            const isActive = currentPose().active;
             S.holdProgress = Math.min(elapsed / CFG.holdMs, 1);
             $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
-            $('hold-text').textContent = S.holdProgress < 1 ? 'HOLD IT!' : 'YES!';
+            $('hold-text').textContent = S.holdProgress < 1 ? (isActive ? 'KEEP GOING!' : 'HOLD IT!') : 'YES!';
             if (S.holdProgress >= 1) poseCompleted();
         }
     } else {
