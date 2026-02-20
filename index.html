@@ -67,6 +67,7 @@
                 <span class="badge">🎂 Ages 3–5</span>
                 <span class="badge">🔒 100% Local</span>
             </div>
+            <p class="demo-credit">This is a demo of <strong>GitHub Copilot</strong> built in an hour on the advice of a 3 and 5 year old</p>
         </div>
     </div>
 
@@ -100,9 +101,9 @@
         <!-- Scoreboard -->
         <div class="scoreboard" id="scoreboard"></div>
 
-        <!-- Main area -->
+        <!-- Main area: side by side -->
         <div class="game-main">
-            <!-- Left panel: target pose -->
+            <!-- Center: target pose (hero) -->
             <div class="pose-panel" id="pose-panel">
                 <div class="pose-card">
                     <div class="pose-illustration" id="pose-illustration"></div>
@@ -114,10 +115,10 @@
                     </div>
                     <div class="meter-label" id="meter-label">0%</div>
                 </div>
-                <div class="player-count" id="player-count">👀 Looking for players…</div>
+                <div class="encouragement" id="encouragement">👀 Step in front of the camera!</div>
             </div>
 
-            <!-- Camera view -->
+            <!-- Right: live camera view -->
             <div class="camera-area" id="camera-area">
                 <video id="webcam" autoplay playsinline muted></video>
                 <canvas id="game-canvas"></canvas>
@@ -130,6 +131,8 @@
                     </svg>
                     <div class="hold-text" id="hold-text">HOLD IT!</div>
                 </div>
+
+                <div class="camera-label">📹 That's you!</div>
             </div>
         </div>
 

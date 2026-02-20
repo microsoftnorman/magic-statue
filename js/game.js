@@ -206,6 +206,9 @@ const S = {
     mediaRecorder: null,
     recordedChunks: [],
     autoCountdownId: null,
+    lastEncourageTime: 0,
+    lastEncourageMsg: '',
+    noPlayerFrames: 0,
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -425,8 +428,12 @@ async function titleDetect() {
             S.playersFound = count;
             updatePlayerBubbles(count);
             if (count > 0 && S.modelReady) checkReady();
+            // Update player count text during auto-countdown
+            if (count > 0 && S.ready) {
+                markSetupDone('setup-players', '\ud83d\udc40 ' + count + ' player' + (count>1?'s':'') + ' found!');
+            }
             if (count === 0 && S.ready) {
-                // Players left, but button stays enabled
+                // Players left, but game stays ready
             }
         }
     } catch(_){}
@@ -801,7 +808,7 @@ function drawFrame() {
         drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length]);
     }
 
-    updatePlayerCount(count);
+    updateEncouragement(count);
 }
 
 function drawSkeleton(kp, color) {
@@ -1561,10 +1568,58 @@ function updateMeter(v){
     $('meter-label').textContent = pct + '%';
 }
 
-function updatePlayerCount(n){
-    const el = $('player-count');
-    if (n === 0) el.textContent = '👀 Step in front of the camera!';
-    else el.textContent = '👤'.repeat(n) + ' ' + n + ' player' + (n>1?'s':'') + ' found!';
+function updateEncouragement(playerCount) {
+    const el = $('encouragement');
+    if (!el) return;
+    const now = performance.now();
+    const phase = S.phase;
+
+    el.classList.remove('warn', 'good');
+
+    if (playerCount === 0) {
+        S.noPlayerFrames++;
+        if (S.noPlayerFrames > 30) { // ~0.5s at 60fps
+            el.textContent = '👀 I can\'t see you! Step in front of the camera!';
+            el.classList.add('warn');
+            // Narrate only once every 6 seconds
+            if (now - S.lastEncourageTime > 6000) {
+                S.lastEncourageTime = now;
+                narrate('I can\'t see you! Come stand in front of the camera!');
+            }
+        }
+        return;
+    }
+
+    S.noPlayerFrames = 0;
+
+    if (phase !== 'matching' && phase !== 'holding') return;
+
+    const score = S.smoothScore;
+    let msg = '';
+
+    if (phase === 'holding' && S.holdProgress > 0.5) {
+        const holdMsgs = ['Almost there! Keep it up! 🌟', 'So close! You\'re amazing! ✨', 'Don\'t move! Nearly done! 💪'];
+        msg = holdMsgs[Math.floor(now / 3000) % holdMsgs.length];
+        el.classList.add('good');
+    } else if (score >= CFG.matchThreshold) {
+        const goodMsgs = ['That\'s it! You\'re doing it! 🎉', 'Perfect! Hold that pose! ⭐', 'Great job! You look amazing! 🌈'];
+        msg = goodMsgs[Math.floor(now / 2500) % goodMsgs.length];
+        el.classList.add('good');
+    } else if (score > 0.3) {
+        const closeMsgs = ['Getting close! Keep trying! 💫', 'Nearly there! Move a little more! 🙌', 'You\'re so close! Just a bit more! 🦸'];
+        msg = closeMsgs[Math.floor(now / 3000) % closeMsgs.length];
+    } else if (score > 0.1) {
+        const tryMsgs = ['Look at the pose and copy it! 👆', 'Try moving your arms! 🙋', 'You can do it! Look at the picture! 💪'];
+        msg = tryMsgs[Math.floor(now / 4000) % tryMsgs.length];
+    } else {
+        const startMsgs = ['Copy the pose on the left! 👈', 'Try to match the picture! 🎯', 'Move your body like the picture! 🕺'];
+        msg = startMsgs[Math.floor(now / 4000) % startMsgs.length];
+    }
+
+    if (msg !== S.lastEncourageMsg) {
+        el.textContent = msg;
+        S.lastEncourageMsg = msg;
+    }
 }
 
 function buildProgressDots(){
