@@ -6,8 +6,10 @@
 // ─── CONFIGURATION ────────────────────────────
 const CFG = {
     confidence:       0.25,   // keypoint confidence threshold
-    matchThreshold:   0.62,   // % match to begin hold
-    holdMs:           2500,   // ms to hold a pose
+    matchThreshold:   0.50,   // % match to begin hold (forgiving for kids)
+    holdMs:           2000,   // ms to hold a freeze pose
+    activeHoldMs:     3500,   // cumulative ms needed for active poses
+    holdDecayRate:    0.5,    // freeze hold decays at half fill speed
     previewMs:        3200,   // ms to show pose intro
     celebrateMs:      2800,   // ms of celebration
     countdownSec:     3,      // 3-2-1 countdown
@@ -199,6 +201,10 @@ const S = {
     streak: 0,
     bestStreak: 0,
     replayTimerId: null,
+    holdAccum: 0,
+    lastFrameTime: 0,
+    mediaRecorder: null,
+    recordedChunks: [],
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -282,6 +288,12 @@ async function startGame() {
 }
 
 function restartGame() {
+    // Clean up any in-progress video recording
+    if (S.mediaRecorder && S.mediaRecorder.state !== 'inactive') {
+        try { S.mediaRecorder.stop(); } catch(e) {}
+    }
+    S.mediaRecorder = null;
+    S.recordedChunks = [];
     S.poseOrder = pickPoses();
     S.poseIdx = 0;
     S.smoothScore = 0;
@@ -289,6 +301,8 @@ function restartGame() {
     S.playerScores = [0,0,0,0];
     S.streak = 0;
     S.bestStreak = 0;
+    S.holdAccum = 0;
+    S.lastFrameTime = 0;
     narrate('Let\'s play again! Get ready!');
     showScreen('screen-game');
     buildProgressDots();
@@ -503,12 +517,15 @@ function beginMatching() {
     S.smoothScore = 0;
     S.holdStart   = 0;
     S.holdProgress = 0;
+    S.holdAccum = 0;
+    S.lastFrameTime = performance.now();
     S.poseStartTime = performance.now();
     hide($('hold-overlay'));
     hide($('statue-flash'));
     const pose = currentPose();
     if (pose.active) {
         narrate(pose.multiPlayer ? 'Do this one together! Keep moving!' : 'Keep moving! You can do it!');
+        startVideoRecording();
     } else if (pose.multiPlayer) {
         narrate('Do this one together! Work as a team!');
     } else {
@@ -525,6 +542,14 @@ async function poseCompleted() {
 
     // Capture screenshot before celebration effects
     captureScreenshot();
+
+    // Stop video recording for active poses and attach to screenshot entry
+    if (currentPose().active) {
+        const videoUrl = await stopVideoRecording();
+        if (videoUrl && S.screenshots.length > 0) {
+            S.screenshots[S.screenshots.length - 1].video = videoUrl;
+        }
+    }
 
     // Streak tracking
     S.streak++;
@@ -582,6 +607,9 @@ async function poseTimedOut() {
     S.phase = 'celebrate';
     cancelLoop();
     clearPoseTimer();
+
+    // Discard video recording on timeout
+    if (currentPose().active) await stopVideoRecording();
 
     S.streak = 0; // reset streak on timeout
     playFailSound();
@@ -780,12 +808,29 @@ function drawSkeleton(kp, color) {
 function updateLogic() {
     const poses = S.detected;
     const count = Math.min(poses.length, 4);
+    const now = performance.now();
+    const dt = now - S.lastFrameTime;
+    S.lastFrameTime = now;
+
     if (count === 0) {
         S.smoothScore = lerp(S.smoothScore, 0, 0.15);
         updateMeter(S.smoothScore);
         if (S.phase === 'holding') {
-            S.phase = 'matching';
-            hide($('hold-overlay'));
+            const pose = currentPose();
+            if (pose.active) {
+                // Active: keep overlay, just pause accumulation
+            } else {
+                // Freeze: gradual decay instead of instant reset
+                S.holdAccum = Math.max(0, S.holdAccum - dt * CFG.holdDecayRate);
+                S.holdProgress = S.holdAccum / CFG.holdMs;
+                $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
+                if (S.holdAccum <= 0) {
+                    S.phase = 'matching';
+                    S.holdProgress = 0;
+                    hide($('hold-overlay'));
+                    $('hold-ring-fg').style.strokeDashoffset = 327;
+                }
+            }
         }
         return;
     }
@@ -813,29 +858,39 @@ function updateLogic() {
     else if (S.smoothScore > 0.4) cam.classList.add('glow-yellow');
     else if (S.smoothScore > 0.2) cam.classList.add('glow-red');
 
+    const isActive = pose.active;
+    const holdTarget = isActive ? CFG.activeHoldMs : CFG.holdMs;
+
     if (S.smoothScore >= CFG.matchThreshold) {
         if (S.phase === 'matching') {
             S.phase = 'holding';
-            S.holdStart = performance.now();
             show($('hold-overlay'));
             playTone(440, .1);
-            const isActive = currentPose().active;
             narrate(isActive ? 'Great! Keep going!' : 'Hold it! Freeze like a statue!');
         }
         if (S.phase === 'holding') {
-            const elapsed = performance.now() - S.holdStart;
-            const isActive = currentPose().active;
-            S.holdProgress = Math.min(elapsed / CFG.holdMs, 1);
+            S.holdAccum = Math.min(S.holdAccum + dt, holdTarget);
+            S.holdProgress = S.holdAccum / holdTarget;
             $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
             $('hold-text').textContent = S.holdProgress < 1 ? (isActive ? 'KEEP GOING!' : 'HOLD IT!') : 'YES!';
             if (S.holdProgress >= 1) poseCompleted();
         }
     } else {
         if (S.phase === 'holding') {
-            S.phase = 'matching';
-            S.holdProgress = 0;
-            hide($('hold-overlay'));
-            $('hold-ring-fg').style.strokeDashoffset = 327;
+            if (isActive) {
+                // Active: progress pauses, no decay — keep overlay visible
+            } else {
+                // Freeze: gradual decay instead of instant reset
+                S.holdAccum = Math.max(0, S.holdAccum - dt * CFG.holdDecayRate);
+                S.holdProgress = S.holdAccum / holdTarget;
+                $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
+                if (S.holdAccum <= 0) {
+                    S.phase = 'matching';
+                    S.holdProgress = 0;
+                    hide($('hold-overlay'));
+                    $('hold-ring-fg').style.strokeDashoffset = 327;
+                }
+            }
         }
     }
 }
@@ -1855,6 +1910,48 @@ function playMusicLoop() {
     S.bgMusicTimer = setTimeout(() => playMusicLoop(), (loopLen - 0.1) * 1000);
 }
 
+// ─── VIDEO RECORDING (active poses) ──────────
+function startVideoRecording() {
+    try {
+        const stream = S.canvas.captureStream(30);
+        S.recordedChunks = [];
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : MediaRecorder.isTypeSupported('video/webm')
+                ? 'video/webm'
+                : '';
+        const opts = mimeType ? { mimeType } : {};
+        const recorder = new MediaRecorder(stream, opts);
+        recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) S.recordedChunks.push(e.data);
+        };
+        S.mediaRecorder = recorder;
+        recorder.start(100);
+    } catch (e) {
+        console.warn('Video recording not supported:', e);
+        S.mediaRecorder = null;
+    }
+}
+
+function stopVideoRecording() {
+    return new Promise(resolve => {
+        if (!S.mediaRecorder || S.mediaRecorder.state === 'inactive') {
+            S.mediaRecorder = null;
+            resolve(null);
+            return;
+        }
+        const recorder = S.mediaRecorder;
+        recorder.onstop = () => {
+            const blob = new Blob(S.recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            S.mediaRecorder = null;
+            S.recordedChunks = [];
+            resolve(url);
+        };
+        recorder.stop();
+    });
+}
+
 // ─── SCREENSHOTS & GALLERY ───────────────────
 function captureScreenshot() {
     try {
@@ -1883,13 +1980,26 @@ function buildGallery() {
         const card = document.createElement('div');
         card.className = 'gallery-card';
         card.style.animationDelay = (i * 0.15) + 's';
-        const img = document.createElement('img');
-        img.src = shot.image;
-        img.alt = shot.pose.name;
-        card.appendChild(img);
+        if (shot.video) {
+            const vid = document.createElement('video');
+            vid.src = shot.video;
+            vid.controls = true;
+            vid.loop = true;
+            vid.muted = true;
+            vid.autoplay = true;
+            vid.playsInline = true;
+            vid.style.width = '100%';
+            vid.style.borderRadius = '8px';
+            card.appendChild(vid);
+        } else {
+            const img = document.createElement('img');
+            img.src = shot.image;
+            img.alt = shot.pose.name;
+            card.appendChild(img);
+        }
         const label = document.createElement('div');
         label.className = 'gallery-label';
-        label.textContent = shot.pose.emoji + ' ' + shot.pose.name;
+        label.textContent = shot.pose.emoji + ' ' + shot.pose.name + (shot.video ? ' 🎬' : '');
         card.appendChild(label);
         grid.appendChild(card);
     });
