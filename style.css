@@ -468,7 +468,7 @@ html, body {
 /* ============================
    VICTORY SCREEN
    ============================ */
-.victory-content { gap: 18px; }
+.victory-content { gap: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .victory-title {
     font-family: 'Fredoka One', cursive;
     font-size: clamp(2.5rem, 8vw, 4.5rem);
@@ -488,6 +488,44 @@ html, body {
 .victory-msg {
     font-size: clamp(1rem, 2.5vw, 1.4rem);
     opacity: .9;
+}
+
+/* Photo Gallery */
+.photo-gallery {
+    width: 100%;
+    max-width: 800px;
+    margin-top: 10px;
+}
+.gallery-title {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.2rem, 3vw, 1.8rem);
+    margin-bottom: 12px;
+    text-align: center;
+}
+.gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    padding: 0 10px;
+}
+.gallery-card {
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(255,255,255,.15);
+    backdrop-filter: blur(4px);
+    animation: popIn .5s ease-out backwards;
+    box-shadow: 0 4px 15px rgba(0,0,0,.25);
+}
+.gallery-card img {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    display: block;
+}
+.gallery-label {
+    padding: 6px 10px;
+    font-size: clamp(.7rem, 1.8vw, .95rem);
+    text-align: center;
 }
 
 /* Error screen */

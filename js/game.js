@@ -30,8 +30,9 @@ const PLAYER_COLORS = ['#FF6B9D','#4ECDC4','#FFD93D','#7B2FF7'];
 
 // ─── POSE DEFINITIONS ────────────────────────
 const POSES = [
+    // --- Solo poses ---
     {
-        id:'reach_high',  name:'Reach for the Stars!', emoji:'🌟',
+        id:'reach_high', name:'Reach for the Stars!', emoji:'🌟',
         instruction:'Reach BOTH arms UP high!',
         color:'#FFD93D',
     },
@@ -54,6 +55,50 @@ const POSES = [
         id:'touch_toes', name:'Touch Your Toes!', emoji:'🦶',
         instruction:'Bend down and reach for your toes!',
         color:'#FF8C42',
+    },
+    {
+        id:'jumping_jacks', name:'Jumping Jacks!', emoji:'🤸',
+        instruction:'Arms UP high and legs OUT wide!',
+        color:'#FF4081',
+    },
+    {
+        id:'hands_on_head', name:'Hands on Head!', emoji:'🙆',
+        instruction:'Put BOTH hands on top of your head!',
+        color:'#00BCD4',
+    },
+    {
+        id:'flamingo', name:'Flamingo!', emoji:'🦩',
+        instruction:'Stand on ONE leg like a flamingo!',
+        color:'#E91E63',
+    },
+    {
+        id:'superhero', name:'Superhero Pose!', emoji:'🦸',
+        instruction:'Hands on your hips, stand tall and strong!',
+        color:'#3F51B5',
+    },
+    {
+        id:'run_pose', name:'Run in Place!', emoji:'🏃',
+        instruction:'Lift one knee UP high like you\'re running!',
+        color:'#FF5722',
+    },
+    // --- Multiplayer poses (2+ players) ---
+    {
+        id:'high_five', name:'High Five!', emoji:'🙌',
+        instruction:'Give your partner a HIGH FIVE up high!',
+        color:'#FFC107',
+        multiPlayer: true,
+    },
+    {
+        id:'hold_hands', name:'Hold Hands!', emoji:'🤝',
+        instruction:'Hold hands with your partner!',
+        color:'#8BC34A',
+        multiPlayer: true,
+    },
+    {
+        id:'group_hug', name:'Group Hug!', emoji:'🤗',
+        instruction:'Get close and HUG your friends!',
+        color:'#FF7043',
+        multiPlayer: true,
     },
 ];
 
@@ -84,6 +129,10 @@ const S = {
     modelReady: false,
     playersFound: 0,
     titleDetecting: false,
+    screenshots: [],
+    bgMusicPlaying: false,
+    bgMusicGain: null,
+    bgMusicTimer: null,
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -130,6 +179,19 @@ async function beginSetup() {
     narrate('Step in front of the camera so I can see you!');
 }
 
+function pickPoses() {
+    const soloIdx = POSES.map((p,i) => i).filter(i => !POSES[i].multiPlayer);
+    const duoIdx  = POSES.map((p,i) => i).filter(i => POSES[i].multiPlayer);
+    let selected;
+    if (S.playersFound >= 2 && duoIdx.length > 0) {
+        const dc = Math.min(duoIdx.length, 2);
+        selected = [...shuffle([...duoIdx]).slice(0,dc), ...shuffle([...soloIdx]).slice(0,6-dc)];
+    } else {
+        selected = shuffle([...soloIdx]).slice(0, 6);
+    }
+    return shuffle(selected);
+}
+
 async function startGame() {
     if (!S.ready) return;
     cancelTitlePreview();
@@ -137,22 +199,25 @@ async function startGame() {
     narrate('Here we go! Get ready to play Magic Statue!');
     await wait(1800);
 
-    // Shuffle poses
-    S.poseOrder = shuffle([...Array(POSES.length).keys()]);
+    S.poseOrder = pickPoses();
     S.poseIdx = 0;
+    S.screenshots = [];
 
     showScreen('screen-game');
     buildProgressDots();
+    startBgMusic();
     runCountdown();
 }
 
 function restartGame() {
-    S.poseOrder = shuffle([...Array(POSES.length).keys()]);
+    S.poseOrder = pickPoses();
     S.poseIdx = 0;
     S.smoothScore = 0;
+    S.screenshots = [];
     narrate('Let\'s play again! Get ready!');
     showScreen('screen-game');
     buildProgressDots();
+    startBgMusic();
     setTimeout(() => runCountdown(), 1500);
 }
 
@@ -364,13 +429,21 @@ function beginMatching() {
     S.holdProgress = 0;
     hide($('hold-overlay'));
     hide($('statue-flash'));
-    narrate('Now copy the pose! You can do it!');
+    const pose = currentPose();
+    if (pose.multiPlayer) {
+        narrate('Do this one together! Work as a team!');
+    } else {
+        narrate('Now copy the pose! You can do it!');
+    }
     startLoop();
 }
 
 async function poseCompleted() {
     S.phase = 'celebrate';
     cancelLoop();
+
+    // Capture screenshot before celebration effects
+    captureScreenshot();
 
     // flash
     const flash = $('statue-flash');
@@ -404,10 +477,12 @@ async function poseCompleted() {
 function showVictory() {
     S.phase = 'victory';
     cancelLoop();
+    stopBgMusic();
     spawnConfetti(200);
     showScreen('screen-victory');
     playChord(); setTimeout(()=>playChord(),400);
     narrate('You did ALL the poses! You are a Magic Statue Champion! Great job everyone!');
+    buildGallery();
 }
 
 // ─── MAIN GAME LOOP ──────────────────────────
@@ -492,11 +567,18 @@ function updateLogic() {
     }
 
     const pose = currentPose();
-    let total = 0;
-    for (let i = 0; i < count; i++) {
-        total += checkPose(poses[i].keypoints, pose.id);
+    let avg;
+
+    if (pose.multiPlayer) {
+        avg = (count >= 2) ? checkMultiPose(poses.slice(0, count), pose.id) : 0;
+    } else {
+        let total = 0;
+        for (let i = 0; i < count; i++) {
+            total += checkPose(poses[i].keypoints, pose.id);
+        }
+        avg = total / count;
     }
-    const avg = total / count;
+
     S.smoothScore = lerp(S.smoothScore, avg, 0.25);
     updateMeter(S.smoothScore);
 
@@ -535,11 +617,27 @@ function updateLogic() {
 // ─── POSE MATCHING ────────────────────────────
 function checkPose(kp, id) {
     switch (id) {
-        case 'reach_high':  return checkReachHigh(kp);
-        case 'starfish':    return checkStarfish(kp);
-        case 'tiny_mouse':  return checkTinyMouse(kp);
-        case 'airplane':    return checkAirplane(kp);
-        case 'touch_toes':  return checkTouchToes(kp);
+        case 'reach_high':    return checkReachHigh(kp);
+        case 'starfish':      return checkStarfish(kp);
+        case 'tiny_mouse':    return checkTinyMouse(kp);
+        case 'airplane':      return checkAirplane(kp);
+        case 'touch_toes':    return checkTouchToes(kp);
+        case 'jumping_jacks': return checkJumpingJacks(kp);
+        case 'hands_on_head': return checkHandsOnHead(kp);
+        case 'flamingo':      return checkFlamingo(kp);
+        case 'superhero':     return checkSuperhero(kp);
+        case 'run_pose':      return checkRunPose(kp);
+        default: return 0;
+    }
+}
+
+function checkMultiPose(allPoses, id) {
+    const valid = allPoses.filter(p => p.keypoints && p.keypoints.length >= 17);
+    if (valid.length < 2) return 0;
+    switch (id) {
+        case 'high_five':  return checkHighFive(valid);
+        case 'hold_hands': return checkHoldHands(valid);
+        case 'group_hug':  return checkGroupHug(valid);
         default: return 0;
     }
 }
@@ -657,6 +755,182 @@ function checkTouchToes(kp){
         const avgH=(lh.y+rh.y)/2;
         const torso=(kpOk(ls))?Math.abs(avgH-ls.y):100;
         n++; if(avgH-nose.y < torso*1.2)s++;
+    }
+    return n?s/n:0;
+}
+
+// --- New solo pose checks ---
+
+function checkJumpingJacks(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6],nose=kp[0];
+    const la=kp[15],ra=kp[16],lh=kp[11],rh=kp[12];
+    if(kpOk(lw)&&kpOk(nose)){n++;if(lw.y<nose.y)s++;}
+    if(kpOk(rw)&&kpOk(nose)){n++;if(rw.y<nose.y)s++;}
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)>sw*1.3)s++;
+    }
+    if(kpOk(la)&&kpOk(ra)&&kpOk(lh)&&kpOk(rh)){
+        const hw=Math.abs(lh.x-rh.x);
+        n++;if(Math.abs(la.x-ra.x)>Math.max(hw*1.3,40))s++;
+    }
+    return n?s/n:0;
+}
+
+function checkHandsOnHead(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],nose=kp[0],ls=kp[5],rs=kp[6];
+    if(kpOk(lw)&&kpOk(ls)){n++;if(lw.y<ls.y)s++;}
+    if(kpOk(rw)&&kpOk(rs)){n++;if(rw.y<rs.y)s++;}
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(nose)&&kpOk(ls)){
+        const headH=Math.abs(nose.y-ls.y);
+        const avgW=(lw.y+rw.y)/2;
+        n++;if(Math.abs(avgW-nose.y)<headH*1.2)s++;
+    }
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)<sw*1.5)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkFlamingo(kp){
+    let s=0, n=0;
+    const la=kp[15],ra=kp[16],lk=kp[13],rk=kp[14];
+    const lh=kp[11],rh=kp[12],ls=kp[5],nose=kp[0];
+    if(kpOk(la)&&kpOk(ra)){
+        const diff=Math.abs(la.y-ra.y);
+        const legLen=kpOk(lh)?Math.abs(Math.max(la.y,ra.y)-lh.y):100;
+        n++;if(diff>legLen*0.3)s++;
+    }
+    if(kpOk(lk)&&kpOk(rk)&&kpOk(lh)&&kpOk(rh)){
+        const lD=Math.abs(lk.y-lh.y), rD=Math.abs(rk.y-rh.y);
+        const torso=kpOk(ls)?Math.abs(lh.y-ls.y):100;
+        n++;if(Math.min(lD,rD)<torso*0.6)s++;
+    }
+    if(kpOk(nose)&&kpOk(lh)){n++;if(nose.y<lh.y)s++;}
+    return n?s/n:0;
+}
+
+function checkSuperhero(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
+    const le=kp[7],re=kp[8],lh=kp[11],rh=kp[12];
+    if(kpOk(lw)&&kpOk(lh)&&kpOk(ls)){
+        const t=Math.abs(lh.y-ls.y);
+        n++;if(Math.abs(lw.y-lh.y)<t*0.5)s++;
+    }
+    if(kpOk(rw)&&kpOk(rh)&&kpOk(rs)){
+        const t=Math.abs(rh.y-rs.y);
+        n++;if(Math.abs(rw.y-rh.y)<t*0.5)s++;
+    }
+    if(kpOk(le)&&kpOk(re)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(le.x-re.x)>sw*1.1)s++;
+    }
+    if(kpOk(kp[0])&&kpOk(lh)&&kpOk(ls)){
+        const t=Math.abs(lh.y-ls.y);
+        n++;if(lh.y-kp[0].y>t*1.5)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkRunPose(kp){
+    let s=0, n=0;
+    const lk=kp[13],rk=kp[14],lh=kp[11],rh=kp[12];
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
+    if(kpOk(lk)&&kpOk(rk)){
+        const diff=Math.abs(lk.y-rk.y);
+        const legLen=kpOk(lh)?Math.abs(lh.y-Math.max(lk.y,rk.y)):100;
+        n++;if(diff>legLen*0.3)s++;
+    }
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const avgS=(ls.y+rs.y)/2;
+        n++;if(lw.y<avgS||rw.y<avgS)s++;
+    }
+    if(kpOk(kp[0])&&kpOk(lh)){n++;if(kp[0].y<lh.y)s++;}
+    return n?s/n:0;
+}
+
+// --- Multiplayer pose checks ---
+
+function checkHighFive(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkHighFivePair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkHighFivePair(kp1,kp2){
+    let s=0, n=0;
+    const w1=[kp1[9],kp1[10]].filter(kpOk);
+    const w2=[kp2[9],kp2[10]].filter(kpOk);
+    if(!w1.length||!w2.length) return 0;
+    let minD=Infinity,bw1,bw2;
+    for(const a of w1) for(const b of w2){
+        const d=Math.hypot(a.x-b.x,a.y-b.y);
+        if(d<minD){minD=d;bw1=a;bw2=b;}
+    }
+    const body=(kpOk(kp1[5])&&kpOk(kp1[6]))?Math.abs(kp1[5].x-kp1[6].x):100;
+    n++;if(minD<body*2.5)s++;
+    const s1=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:300;
+    const s2=(kpOk(kp2[5])&&kpOk(kp2[6]))?(kp2[5].y+kp2[6].y)/2:300;
+    n++;if(bw1.y<s1)s++;
+    n++;if(bw2.y<s2)s++;
+    return n?s/n:0;
+}
+
+function checkHoldHands(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkHoldHandsPair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkHoldHandsPair(kp1,kp2){
+    let s=0, n=0;
+    const w1=[kp1[9],kp1[10]].filter(kpOk);
+    const w2=[kp2[9],kp2[10]].filter(kpOk);
+    if(!w1.length||!w2.length) return 0;
+    let minD=Infinity,bw1,bw2;
+    for(const a of w1) for(const b of w2){
+        const d=Math.hypot(a.x-b.x,a.y-b.y);
+        if(d<minD){minD=d;bw1=a;bw2=b;}
+    }
+    const body=(kpOk(kp1[5])&&kpOk(kp1[6]))?Math.abs(kp1[5].x-kp1[6].x):100;
+    n++;if(minD<body*2.5)s++;
+    n++;if(Math.abs(bw1.y-bw2.y)<body*1.5)s++;
+    const s1=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:200;
+    n++;if(bw1.y>s1-20)s++;
+    return n?s/n:0;
+}
+
+function checkGroupHug(allPoses){
+    if(allPoses.length<2) return 0;
+    let s=0, n=0;
+    const centers=allPoses.map(p=>{
+        const l=p.keypoints[5],r=p.keypoints[6];
+        if(kpOk(l)&&kpOk(r)) return (l.x+r.x)/2;
+        return null;
+    }).filter(v=>v!==null);
+    if(centers.length<2) return 0;
+    const body=(kpOk(allPoses[0].keypoints[5])&&kpOk(allPoses[0].keypoints[6]))?
+        Math.abs(allPoses[0].keypoints[5].x-allPoses[0].keypoints[6].x):100;
+    let totalDist=0, pairs=0;
+    for(let i=0;i<centers.length;i++)
+        for(let j=i+1;j<centers.length;j++){
+            totalDist+=Math.abs(centers[i]-centers[j]); pairs++;
+        }
+    const avg=totalDist/pairs;
+    n++;if(avg<body*5)s++;
+    n++;if(avg<body*3)s++;
+    for(let i=0;i<Math.min(allPoses.length,4);i++){
+        const kp=allPoses[i].keypoints;
+        const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
+        if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+            n++;if(Math.abs(lw.x-rw.x)>Math.abs(ls.x-rs.x)*1.2)s++;
+        }
     }
     return n?s/n:0;
 }
@@ -791,13 +1065,26 @@ let narratorTimeout = null;
 
 function initNarrator() {
     if (!('speechSynthesis' in window)) return;
-    // Pre-load voices (some browsers load async)
     const loadVoices = () => {
         const voices = speechSynthesis.getVoices();
-        // Prefer a friendly English voice
-        narratorVoice = voices.find(v => /english.*female|samantha|zira|karen|Google.*US/i.test(v.name))
-            || voices.find(v => /en[-_]US|en[-_]GB/i.test(v.lang))
-            || voices[0] || null;
+        if (!voices.length) return;
+        // Ranked preference: natural/neural voices first
+        const ranks = [
+            v => /Microsoft.*Online.*Natural/i.test(v.name) && /en/i.test(v.lang),
+            v => /(aria|jenny|ana|guy|ryan)/i.test(v.name) && /Microsoft/i.test(v.name),
+            v => /Google.*US/i.test(v.name),
+            v => /Google/i.test(v.name) && /en/i.test(v.lang),
+            v => /(samantha|karen|moira|tessa).*premium/i.test(v.name),
+            v => /(samantha|karen|moira|tessa)/i.test(v.name),
+            v => /(natural|neural|premium|enhanced)/i.test(v.name) && /en/i.test(v.lang),
+            v => /en[-_]US/i.test(v.lang),
+            v => /en[-_]/i.test(v.lang),
+        ];
+        for (const test of ranks) {
+            const m = voices.find(test);
+            if (m) { narratorVoice = m; return; }
+        }
+        narratorVoice = voices[0] || null;
     };
     loadVoices();
     speechSynthesis.addEventListener('voiceschanged', loadVoices);
@@ -817,15 +1104,163 @@ function narrate(text) {
         narratorTimeout = setTimeout(() => bar.classList.add('hidden'), 6000);
     }
 
+    // Duck music while speaking
+    duckMusic();
+
     // Speak aloud
     if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel(); // stop any current speech
+    speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.9;   // slightly slow for kids
-    utter.pitch = 1.15; // slightly higher / friendlier
+
+    // Auto-tune prosody based on content
+    const excited = /!|amazing|wow|fantastic|hooray|superstar|champion|great.job|nailed|awesome|star/i.test(text);
+    const instruct = /copy|hold|freeze|step|stand|reach|spread|crouch|bend|lift|put|run|jump|hug|high.five/i.test(text);
+    if (excited) {
+        utter.rate = 1.0;
+        utter.pitch = 1.25;
+    } else if (instruct) {
+        utter.rate = 0.88;
+        utter.pitch = 1.1;
+    } else {
+        utter.rate = 0.92;
+        utter.pitch = 1.12;
+    }
     utter.volume = 1;
     if (narratorVoice) utter.voice = narratorVoice;
+    utter.onend = () => unduckMusic();
+    utter.onerror = () => unduckMusic();
     speechSynthesis.speak(utter);
+}
+
+// ─── BACKGROUND MUSIC (Web Audio procedural) ─
+function startBgMusic() {
+    const ctx = S.audioCtx;
+    if (!ctx || S.bgMusicPlaying) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    S.bgMusicPlaying = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.07;
+    gain.connect(ctx.destination);
+    S.bgMusicGain = gain;
+    playMusicLoop();
+}
+
+function stopBgMusic() {
+    S.bgMusicPlaying = false;
+    if (S.bgMusicTimer) { clearTimeout(S.bgMusicTimer); S.bgMusicTimer = null; }
+    if (S.bgMusicGain && S.audioCtx) {
+        try { S.bgMusicGain.gain.linearRampToValueAtTime(0, S.audioCtx.currentTime + 0.5); } catch(_){}
+    }
+}
+
+function duckMusic() {
+    if (S.bgMusicGain && S.audioCtx)
+        try { S.bgMusicGain.gain.linearRampToValueAtTime(0.025, S.audioCtx.currentTime + 0.2); } catch(_){}
+}
+function unduckMusic() {
+    if (S.bgMusicGain && S.audioCtx && S.bgMusicPlaying)
+        try { S.bgMusicGain.gain.linearRampToValueAtTime(0.07, S.audioCtx.currentTime + 0.4); } catch(_){}
+}
+
+function playMusicLoop() {
+    if (!S.bgMusicPlaying || !S.audioCtx) return;
+    const ctx = S.audioCtx;
+    const dest = S.bgMusicGain;
+    const bpm = 128;
+    const eighth = 60 / bpm / 2;
+    const now = ctx.currentTime + 0.05;
+
+    // Cheerful pentatonic melody
+    const melody = [
+        523,659,784,659, 880,784,659,523,
+        587,784,880,784, 659,587,523,0,
+        784,880,1047,880, 784,659,587,659,
+        784,880,784,659, 587,659,523,0
+    ];
+    // Bass line (quarter notes)
+    const bass = [131,131,110,175, 196,165,147,131];
+
+    melody.forEach((freq, i) => {
+        if (!freq) return;
+        const t = now + i * eighth;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.connect(g); g.connect(dest);
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.25, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 0.85);
+        osc.start(t); osc.stop(t + eighth);
+    });
+
+    bass.forEach((freq, i) => {
+        const t = now + i * eighth * 4;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.connect(g); g.connect(dest);
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0.18, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 3.8);
+        osc.start(t); osc.stop(t + eighth * 4);
+    });
+
+    // Soft hi-hat rhythm
+    for (let i = 0; i < 32; i += 2) {
+        const t = now + i * eighth;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.connect(g); g.connect(dest);
+        osc.type = 'square';
+        osc.frequency.value = 6000 + Math.random() * 2000;
+        g.gain.setValueAtTime(0.012, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+        osc.start(t); osc.stop(t + 0.05);
+    }
+
+    const loopLen = melody.length * eighth;
+    S.bgMusicTimer = setTimeout(() => playMusicLoop(), (loopLen - 0.1) * 1000);
+}
+
+// ─── SCREENSHOTS & GALLERY ───────────────────
+function captureScreenshot() {
+    try {
+        const dataUrl = S.canvas.toDataURL('image/jpeg', 0.85);
+        S.screenshots.push({ image: dataUrl, pose: currentPose() });
+    } catch(e) { console.warn('Screenshot failed:', e); }
+}
+
+function buildGallery() {
+    const el = $('photo-gallery');
+    if (!el) return;
+    el.innerHTML = '';
+    if (!S.screenshots.length) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+
+    const title = document.createElement('h3');
+    title.className = 'gallery-title';
+    title.textContent = '\ud83d\udcf8 Your Magic Moments!';
+    el.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'gallery-grid';
+    el.appendChild(grid);
+
+    S.screenshots.forEach((shot, i) => {
+        const card = document.createElement('div');
+        card.className = 'gallery-card';
+        card.style.animationDelay = (i * 0.15) + 's';
+        const img = document.createElement('img');
+        img.src = shot.image;
+        img.alt = shot.pose.name;
+        card.appendChild(img);
+        const label = document.createElement('div');
+        label.className = 'gallery-label';
+        label.textContent = shot.pose.emoji + ' ' + shot.pose.name;
+        card.appendChild(label);
+        grid.appendChild(card);
+    });
 }
 
 // ─── SVG POSE ILLUSTRATIONS ──────────────────
@@ -888,6 +1323,91 @@ function getPoseSVG(id){
             ${head(105,78)}
             ${hand(85,230)}${hand(135,230)}
             ${foot(80,264)}${foot(140,264)}
+        </svg>`,
+
+        jumping_jacks: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,40,20)}${limb(100,95,160,20)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,40,268,'#FF6B9D')}${limb(100,175,160,268,'#FF6B9D')}
+            ${head(100,58)}${hand(40,20)}${hand(160,20)}
+            ${foot(40,272)}${foot(160,272)}
+            <text x="100" y="16" text-anchor="middle" font-size="16">🎉</text>
+        </svg>`,
+
+        hands_on_head: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,82,42)}${limb(100,95,118,42)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
+            ${head(100,58)}${hand(82,42)}${hand(118,42)}
+            ${foot(78,264)}${foot(122,264)}
+        </svg>`,
+
+        flamingo: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,50,65)}${limb(100,95,150,65)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,100,260,'#FF6B9D')}
+            ${limb(100,175,140,195,'#FF6B9D')}${limb(140,195,130,170,'#FF6B9D')}
+            ${head(100,58)}${hand(50,65)}${hand(150,65)}
+            ${foot(100,264)}
+            <text x="158" y="165" text-anchor="middle" font-size="18">🦩</text>
+        </svg>`,
+
+        superhero: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,55,95)}${limb(55,95,72,168)}
+            ${limb(100,95,145,95)}${limb(145,95,128,168)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,65,268,'#FF6B9D')}${limb(100,175,135,268,'#FF6B9D')}
+            ${head(100,58)}${hand(72,168)}${hand(128,168)}
+            ${foot(65,272)}${foot(135,272)}
+            <text x="100" y="22" text-anchor="middle" font-size="22">💪</text>
+        </svg>`,
+
+        run_pose: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,55,55)}${limb(100,95,150,120)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,70,210,'#FF6B9D')}${limb(70,210,80,260,'#FF6B9D')}
+            ${limb(100,175,130,260,'#FF6B9D')}
+            ${head(100,58)}${hand(55,55)}${hand(150,120)}
+            ${foot(80,264)}${foot(130,264)}
+        </svg>`,
+
+        high_five: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(80,100,40,25)}${limb(80,100,148,40)}
+            ${limb(80,100,80,180)}
+            ${limb(80,180,58,264,'#FF6B9D')}${limb(80,180,102,264,'#FF6B9D')}
+            ${head(80,62)}${hand(40,25)}${foot(58,268)}${foot(102,268)}
+            ${limb(240,100,280,25,'#4ECDC4')}${limb(240,100,172,40,'#4ECDC4')}
+            ${limb(240,100,240,180,'#4ECDC4')}
+            ${limb(240,180,218,264,'#FF6B9D')}${limb(240,180,262,264,'#FF6B9D')}
+            ${head(240,62)}${hand(280,25)}${foot(218,268)}${foot(262,268)}
+            ${hand(148,40)}${hand(172,40)}
+            <text x="160" y="30" text-anchor="middle" font-size="22">⭐</text>
+        </svg>`,
+
+        hold_hands: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(80,100,30,65)}${limb(80,100,150,140)}
+            ${limb(80,100,80,180)}
+            ${limb(80,180,58,264,'#FF6B9D')}${limb(80,180,102,264,'#FF6B9D')}
+            ${head(80,62)}${hand(30,65)}${foot(58,268)}${foot(102,268)}
+            ${limb(240,100,290,65,'#4ECDC4')}${limb(240,100,170,140,'#4ECDC4')}
+            ${limb(240,100,240,180,'#4ECDC4')}
+            ${limb(240,180,218,264,'#FF6B9D')}${limb(240,180,262,264,'#FF6B9D')}
+            ${head(240,62)}${hand(290,65)}${foot(218,268)}${foot(262,268)}
+            ${hand(150,140)}${hand(170,140)}
+            <text x="160" y="130" text-anchor="middle" font-size="18">💕</text>
+        </svg>`,
+
+        group_hug: `<svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,100,60,70)}${limb(100,100,170,110)}
+            ${limb(100,100,100,180)}
+            ${limb(100,180,78,264,'#FF6B9D')}${limb(100,180,122,264,'#FF6B9D')}
+            ${head(100,62)}${hand(60,70)}${foot(78,268)}${foot(122,268)}
+            ${limb(180,100,220,70,'#4ECDC4')}${limb(180,100,110,110,'#4ECDC4')}
+            ${limb(180,100,180,180,'#4ECDC4')}
+            ${limb(180,180,158,264,'#FF6B9D')}${limb(180,180,202,264,'#FF6B9D')}
+            ${head(180,62)}${hand(220,70)}${foot(158,268)}${foot(202,268)}
+            ${hand(170,110)}${hand(110,110)}
+            <text x="140" y="48" text-anchor="middle" font-size="22">🤗</text>
         </svg>`,
     };
     return defs[id] || '';
