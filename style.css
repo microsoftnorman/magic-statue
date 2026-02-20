@@ -262,6 +262,59 @@ html, body {
     animation: dotPulse 1s ease-in-out infinite;
 }
 
+/* Timer bar */
+.timer-bar {
+    display: flex; align-items: center; gap: 6px;
+    min-width: 120px;
+}
+.timer-icon { font-size: 1.1rem; }
+.timer-track {
+    flex: 1;
+    height: 10px;
+    border-radius: 8px;
+    background: rgba(255,255,255,.15);
+    overflow: hidden;
+}
+.timer-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 8px;
+    background: #6BCB77;
+    transition: width .3s linear;
+}
+.timer-fill.timer-warn { background: #f39c12; }
+.timer-fill.timer-danger { background: #e74c3c; animation: btnPulse .5s ease-in-out infinite; }
+.timer-text {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.1rem;
+    min-width: 24px;
+    text-align: center;
+}
+
+/* Scoreboard */
+.scoreboard {
+    display: flex; gap: 8px; justify-content: center;
+    padding: 4px 10px;
+    flex-shrink: 0;
+}
+.score-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,.12);
+    border-radius: 20px;
+    padding: 4px 14px;
+    border: 2px solid;
+    backdrop-filter: blur(4px);
+}
+.score-player {
+    font-family: 'Fredoka One', cursive;
+    font-size: .9rem;
+}
+.score-pts {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.1rem;
+    color: #FFD93D;
+}
+
 /* Main layout: side panel + camera */
 .game-main {
     flex: 1;
@@ -488,6 +541,39 @@ html, body {
 .victory-msg {
     font-size: clamp(1rem, 2.5vw, 1.4rem);
     opacity: .9;
+}
+
+/* Final scores */
+.final-scores {
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+    margin: 10px 0;
+}
+.final-score-card {
+    background: rgba(255,255,255,.12);
+    border-radius: 18px;
+    padding: 14px 24px;
+    text-align: center;
+    border: 3px solid;
+    backdrop-filter: blur(4px);
+    animation: popIn .5s ease-out backwards;
+}
+.final-score-card.winner {
+    background: rgba(255,217,61,.2);
+    box-shadow: 0 0 20px rgba(255,217,61,.3);
+}
+.final-score-label {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.2rem;
+}
+.final-score-pts {
+    font-family: 'Fredoka One', cursive;
+    font-size: 2rem;
+    color: #FFD93D;
+    margin: 4px 0;
+}
+.final-score-unit {
+    font-size: .8rem;
+    opacity: .7;
 }
 
 /* Photo Gallery */

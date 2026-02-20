@@ -11,6 +11,7 @@ const CFG = {
     previewMs:        3200,   // ms to show pose intro
     celebrateMs:      2800,   // ms of celebration
     countdownSec:     3,      // 3-2-1 countdown
+    poseTimeLimit:    30000,  // 30 seconds per pose
     videoW:           640,
     videoH:           480,
 };
@@ -133,6 +134,9 @@ const S = {
     bgMusicPlaying: false,
     bgMusicGain: null,
     bgMusicTimer: null,
+    playerScores: [0,0,0,0],
+    poseStartTime: 0,
+    poseTimerId: null,
 };
 
 // ─── DOM HELPERS ──────────────────────────────
@@ -202,9 +206,11 @@ async function startGame() {
     S.poseOrder = pickPoses();
     S.poseIdx = 0;
     S.screenshots = [];
+    S.playerScores = [0,0,0,0];
 
     showScreen('screen-game');
     buildProgressDots();
+    buildScoreboard();
     startBgMusic();
     runCountdown();
 }
@@ -214,9 +220,11 @@ function restartGame() {
     S.poseIdx = 0;
     S.smoothScore = 0;
     S.screenshots = [];
+    S.playerScores = [0,0,0,0];
     narrate('Let\'s play again! Get ready!');
     showScreen('screen-game');
     buildProgressDots();
+    buildScoreboard();
     startBgMusic();
     setTimeout(() => runCountdown(), 1500);
 }
@@ -427,6 +435,7 @@ function beginMatching() {
     S.smoothScore = 0;
     S.holdStart   = 0;
     S.holdProgress = 0;
+    S.poseStartTime = performance.now();
     hide($('hold-overlay'));
     hide($('statue-flash'));
     const pose = currentPose();
@@ -435,15 +444,20 @@ function beginMatching() {
     } else {
         narrate('Now copy the pose! You can do it!');
     }
+    startPoseTimer();
     startLoop();
 }
 
 async function poseCompleted() {
     S.phase = 'celebrate';
     cancelLoop();
+    clearPoseTimer();
 
     // Capture screenshot before celebration effects
     captureScreenshot();
+
+    // Award points to players
+    awardPoints();
 
     // flash
     const flash = $('statue-flash');
@@ -463,6 +477,7 @@ async function poseCompleted() {
     narrate(cheers[Math.floor(Math.random()*cheers.length)]);
 
     markDotDone(S.poseIdx);
+    updateScoreboard();
     await wait(CFG.celebrateMs);
     hide(flash);
 
@@ -474,6 +489,118 @@ async function poseCompleted() {
     }
 }
 
+async function poseTimedOut() {
+    S.phase = 'celebrate';
+    cancelLoop();
+    clearPoseTimer();
+
+    narrate('Time\'s up! Let\'s try the next one!');
+    playTone(220, .3);
+    markDotDone(S.poseIdx);
+    await wait(2000);
+
+    S.poseIdx++;
+    if (S.poseIdx >= S.poseOrder.length) {
+        showVictory();
+    } else {
+        startPoseIntro();
+    }
+}
+
+// ─── POSE TIMER ───────────────────────────────
+function startPoseTimer() {
+    clearPoseTimer();
+    S.poseStartTime = performance.now();
+    const tick = () => {
+        if (S.phase !== 'matching' && S.phase !== 'holding') return;
+        const elapsed = performance.now() - S.poseStartTime;
+        const remaining = Math.max(0, CFG.poseTimeLimit - elapsed);
+        const pct = (remaining / CFG.poseTimeLimit) * 100;
+        const secs = Math.ceil(remaining / 1000);
+        const fill = $('timer-fill');
+        const text = $('timer-text');
+        if (fill) fill.style.width = pct + '%';
+        if (text) text.textContent = secs;
+        if (fill) {
+            fill.classList.remove('timer-warn','timer-danger');
+            if (secs <= 5) fill.classList.add('timer-danger');
+            else if (secs <= 10) fill.classList.add('timer-warn');
+        }
+        if (remaining <= 0) {
+            poseTimedOut();
+            return;
+        }
+        S.poseTimerId = requestAnimationFrame(tick);
+    };
+    tick();
+}
+function clearPoseTimer() {
+    if (S.poseTimerId) { cancelAnimationFrame(S.poseTimerId); S.poseTimerId = null; }
+}
+
+// ─── SCORING ──────────────────────────────────
+function awardPoints() {
+    const poses = S.detected;
+    const count = Math.min(poses.length, 4);
+    const pose = currentPose();
+    const elapsed = performance.now() - S.poseStartTime;
+    // Time bonus: faster = more points (max 100, min 10)
+    const timeBonus = Math.max(10, Math.round(100 * (1 - elapsed / CFG.poseTimeLimit)));
+
+    if (pose.multiPlayer) {
+        // All detected players share the points equally
+        for (let i = 0; i < count; i++) S.playerScores[i] += timeBonus;
+    } else {
+        for (let i = 0; i < count; i++) {
+            const score = checkPose(poses[i].keypoints, pose.id);
+            const pts = Math.round(timeBonus * Math.max(score, 0.5));
+            S.playerScores[i] += pts;
+        }
+    }
+    updateScoreboard();
+}
+
+function buildScoreboard() {
+    const el = $('scoreboard');
+    if (!el) return;
+    el.innerHTML = '';
+    const count = Math.max(S.playersFound, 1);
+    for (let i = 0; i < count; i++) {
+        const d = document.createElement('div');
+        d.className = 'score-chip';
+        d.id = 'score-chip-' + i;
+        d.style.borderColor = PLAYER_COLORS[i % PLAYER_COLORS.length];
+        d.innerHTML = '<span class="score-player">P' + (i+1) + '</span><span class="score-pts" id="score-pts-'+i+'">0</span>';
+        el.appendChild(d);
+    }
+}
+
+function updateScoreboard() {
+    const count = Math.max(S.playersFound, 1);
+    for (let i = 0; i < count; i++) {
+        const el = $('score-pts-' + i);
+        if (el) el.textContent = S.playerScores[i];
+    }
+}
+
+function buildFinalScores() {
+    const el = $('final-scores');
+    if (!el) return;
+    el.innerHTML = '';
+    const count = Math.max(S.playersFound, 1);
+    const maxScore = Math.max(...S.playerScores.slice(0, count));
+    for (let i = 0; i < count; i++) {
+        const d = document.createElement('div');
+        d.className = 'final-score-card' + (S.playerScores[i] === maxScore ? ' winner' : '');
+        d.style.borderColor = PLAYER_COLORS[i % PLAYER_COLORS.length];
+        const crown = S.playerScores[i] === maxScore ? '👑 ' : '';
+        d.innerHTML = '<div class="final-score-label">' + crown + 'P' + (i+1) + '</div>'
+            + '<div class="final-score-pts">' + S.playerScores[i] + '</div>'
+            + '<div class="final-score-unit">points</div>';
+        el.appendChild(d);
+    }
+}
+
 function showVictory() {
     S.phase = 'victory';
     cancelLoop();
@@ -482,6 +609,7 @@ function showVictory() {
     showScreen('screen-victory');
     playChord(); setTimeout(()=>playChord(),400);
     narrate('You did ALL the poses! You are a Magic Statue Champion! Great job everyone!');
+    buildFinalScores();
     buildGallery();
 }
 
@@ -909,29 +1037,60 @@ function checkHoldHandsPair(kp1,kp2){
 function checkGroupHug(allPoses){
     if(allPoses.length<2) return 0;
     let s=0, n=0;
-    const centers=allPoses.map(p=>{
+    // Get body centers (shoulder midpoints) for each person
+    const bodies=allPoses.map(p=>{
         const l=p.keypoints[5],r=p.keypoints[6];
-        if(kpOk(l)&&kpOk(r)) return (l.x+r.x)/2;
-        return null;
+        const lh=p.keypoints[11],rh=p.keypoints[12];
+        if(!kpOk(l)||!kpOk(r)) return null;
+        return {
+            cx:(l.x+r.x)/2,
+            cy:(l.y+r.y)/2,
+            w:Math.abs(l.x-r.x),
+            hipY:(kpOk(lh)&&kpOk(rh))?(lh.y+rh.y)/2:l.y+100,
+            kp:p.keypoints
+        };
     }).filter(v=>v!==null);
-    if(centers.length<2) return 0;
-    const body=(kpOk(allPoses[0].keypoints[5])&&kpOk(allPoses[0].keypoints[6]))?
-        Math.abs(allPoses[0].keypoints[5].x-allPoses[0].keypoints[6].x):100;
+    if(bodies.length<2) return 0;
+
+    // Estimate average body width for scaling
+    const avgBody=bodies.reduce((a,b)=>a+b.w,0)/bodies.length || 100;
+
+    // 1) Players are close together (centers within ~3 body widths)
     let totalDist=0, pairs=0;
-    for(let i=0;i<centers.length;i++)
-        for(let j=i+1;j<centers.length;j++){
-            totalDist+=Math.abs(centers[i]-centers[j]); pairs++;
+    for(let i=0;i<bodies.length;i++)
+        for(let j=i+1;j<bodies.length;j++){
+            totalDist+=Math.abs(bodies[i].cx-bodies[j].cx); pairs++;
         }
-    const avg=totalDist/pairs;
-    n++;if(avg<body*5)s++;
-    n++;if(avg<body*3)s++;
-    for(let i=0;i<Math.min(allPoses.length,4);i++){
-        const kp=allPoses[i].keypoints;
+    const avgDist=totalDist/pairs;
+    n++; if(avgDist<avgBody*6) s+=0.5;
+    n++; if(avgDist<avgBody*4) s++;
+
+    // 2) At least one pair of wrists crosses between players (arms reaching toward each other)
+    let crossCount=0;
+    for(let i=0;i<bodies.length;i++)
+        for(let j=i+1;j<bodies.length;j++){
+            const kpA=bodies[i].kp, kpB=bodies[j].kp;
+            const wrists=[[kpA[9],kpA[10]],[kpB[9],kpB[10]]];
+            for(const wa of wrists[0].filter(kpOk))
+                for(const wb of wrists[1].filter(kpOk)){
+                    const d=Math.hypot(wa.x-wb.x,wa.y-wb.y);
+                    if(d<avgBody*4) crossCount++;
+                }
+        }
+    n++; if(crossCount>0) s++;
+
+    // 3) Arms are NOT straight at sides (reaching out = hugging)
+    for(let i=0;i<bodies.length;i++){
+        const kp=bodies[i].kp;
         const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
         if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
-            n++;if(Math.abs(lw.x-rw.x)>Math.abs(ls.x-rs.x)*1.2)s++;
+            const wristSpread=Math.abs(lw.x-rw.x);
+            const shoulderW=Math.abs(ls.x-rs.x);
+            // In a hug, wrists are typically near or past shoulders (arms out)
+            n++; if(wristSpread > shoulderW*0.8) s++;
         }
     }
+
     return n?s/n:0;
 }
 

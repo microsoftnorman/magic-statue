@@ -80,8 +80,15 @@
                 <span class="pose-emoji-bar" id="pose-emoji-bar">⭐</span>
                 <span class="pose-name-bar" id="pose-name-bar">Starfish!</span>
             </div>
+            <div class="timer-bar" id="timer-bar">
+                <span class="timer-icon">⏱️</span>
+                <div class="timer-track"><div class="timer-fill" id="timer-fill"></div></div>
+                <span class="timer-text" id="timer-text">30</span>
+            </div>
             <div class="progress-dots" id="progress-dots"></div>
         </div>
+        <!-- Scoreboard -->
+        <div class="scoreboard" id="scoreboard"></div>
 
         <!-- Main area -->
         <div class="game-main">
@@ -146,6 +153,7 @@
                 <span style="--d:.45s">⭐</span>
                 <span style="--d:.6s">⭐</span>
             </div>
+            <div id="final-scores" class="final-scores"></div>
             <p class="victory-msg">You're a Magic Statue Champion!</p>
             <div id="photo-gallery" class="photo-gallery hidden"></div>
             <button class="btn-big btn-play" onclick="restartGame()">🔄 Play Again!</button>
