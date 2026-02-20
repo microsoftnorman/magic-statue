@@ -82,6 +82,36 @@ const POSES = [
         instruction:'Lift one knee UP high like you\'re running!',
         color:'#FF5722',
     },
+    {
+        id:'wave_hello', name:'Wave Hello!', emoji:'👋',
+        instruction:'Wave one hand UP high above your head!',
+        color:'#AB47BC',
+    },
+    {
+        id:'tree_pose', name:'Tree Pose!', emoji:'🌳',
+        instruction:'Arms UP together like branches and stand tall!',
+        color:'#66BB6A',
+    },
+    {
+        id:'crab_walk', name:'Crab!', emoji:'🦀',
+        instruction:'Squat down low and spread your arms like crab claws!',
+        color:'#EF5350',
+    },
+    {
+        id:'ballet', name:'Ballet Dancer!', emoji:'🩰',
+        instruction:'Arms in a big circle above your head!',
+        color:'#CE93D8',
+    },
+    {
+        id:'wide_squat', name:'Sumo Squat!', emoji:'🏋️',
+        instruction:'Feet wide, squat down and hold your arms out!',
+        color:'#FF7043',
+    },
+    {
+        id:'disco', name:'Disco!', emoji:'🕺',
+        instruction:'Point one arm UP to the sky and one DOWN!',
+        color:'#FDD835',
+    },
     // --- Multiplayer poses (2+ players) ---
     {
         id:'high_five', name:'High Five!', emoji:'🙌',
@@ -99,6 +129,30 @@ const POSES = [
         id:'group_hug', name:'Group Hug!', emoji:'🤗',
         instruction:'Get close and HUG your friends!',
         color:'#FF7043',
+        multiPlayer: true,
+    },
+    {
+        id:'mirror_pose', name:'Mirror Mirror!', emoji:'🪞',
+        instruction:'Face your partner and copy each other with arms OUT!',
+        color:'#26C6DA',
+        multiPlayer: true,
+    },
+    {
+        id:'back_to_back', name:'Back to Back!', emoji:'🔙',
+        instruction:'Stand BACK to BACK with your partner!',
+        color:'#5C6BC0',
+        multiPlayer: true,
+    },
+    {
+        id:'wave_together', name:'Wave Together!', emoji:'👐',
+        instruction:'Both wave your hands UP high at the same time!',
+        color:'#FFB74D',
+        multiPlayer: true,
+    },
+    {
+        id:'side_by_side', name:'Side by Side!', emoji:'🤜🤛',
+        instruction:'Stand side by side and both reach UP with your outside arm!',
+        color:'#81C784',
         multiPlayer: true,
     },
 ];
@@ -186,12 +240,14 @@ async function beginSetup() {
 function pickPoses() {
     const soloIdx = POSES.map((p,i) => i).filter(i => !POSES[i].multiPlayer);
     const duoIdx  = POSES.map((p,i) => i).filter(i => POSES[i].multiPlayer);
+    const total = 8; // more poses per game for variety
     let selected;
     if (S.playersFound >= 2 && duoIdx.length > 0) {
-        const dc = Math.min(duoIdx.length, 2);
-        selected = [...shuffle([...duoIdx]).slice(0,dc), ...shuffle([...soloIdx]).slice(0,6-dc)];
+        // With 2+ players: half the poses are teamwork!
+        const dc = Math.min(shuffle([...duoIdx]).length, Math.ceil(total / 2));
+        selected = [...shuffle([...duoIdx]).slice(0,dc), ...shuffle([...soloIdx]).slice(0,total-dc)];
     } else {
-        selected = shuffle([...soloIdx]).slice(0, 6);
+        selected = shuffle([...soloIdx]).slice(0, total);
     }
     return shuffle(selected);
 }
@@ -755,6 +811,12 @@ function checkPose(kp, id) {
         case 'flamingo':      return checkFlamingo(kp);
         case 'superhero':     return checkSuperhero(kp);
         case 'run_pose':      return checkRunPose(kp);
+        case 'wave_hello':    return checkWaveHello(kp);
+        case 'tree_pose':     return checkTreePose(kp);
+        case 'crab_walk':     return checkCrabWalk(kp);
+        case 'ballet':        return checkBallet(kp);
+        case 'wide_squat':    return checkWideSquat(kp);
+        case 'disco':         return checkDisco(kp);
         default: return 0;
     }
 }
@@ -763,9 +825,13 @@ function checkMultiPose(allPoses, id) {
     const valid = allPoses.filter(p => p.keypoints && p.keypoints.length >= 17);
     if (valid.length < 2) return 0;
     switch (id) {
-        case 'high_five':  return checkHighFive(valid);
-        case 'hold_hands': return checkHoldHands(valid);
-        case 'group_hug':  return checkGroupHug(valid);
+        case 'high_five':     return checkHighFive(valid);
+        case 'hold_hands':    return checkHoldHands(valid);
+        case 'group_hug':     return checkGroupHug(valid);
+        case 'mirror_pose':   return checkMirrorPose(valid);
+        case 'back_to_back':  return checkBackToBack(valid);
+        case 'wave_together': return checkWaveTogether(valid);
+        case 'side_by_side':  return checkSideBySide(valid);
         default: return 0;
     }
 }
@@ -981,6 +1047,141 @@ function checkRunPose(kp){
     return n?s/n:0;
 }
 
+// --- Additional solo pose checks ---
+
+function checkWaveHello(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6],nose=kp[0];
+    // At least one wrist above nose
+    if(kpOk(nose)){
+        if(kpOk(lw)){n++;if(lw.y<nose.y)s++;}
+        if(kpOk(rw)){n++;if(rw.y<nose.y)s++;}
+    }
+    // Only one arm way up (not both — that's reach_high)
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const lUp=lw.y<ls.y, rUp=rw.y<rs.y;
+        n++;if(lUp!==rUp)s++; // exactly one arm up
+    }
+    // Wrist above head spread from center
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(nose)){
+        const upW=lw.y<rw.y?lw:rw;
+        n++;if(Math.abs(upW.x-nose.x)>20)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkTreePose(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6],nose=kp[0];
+    const la=kp[15],ra=kp[16];
+    // Both wrists above nose
+    if(kpOk(lw)&&kpOk(nose)){n++;if(lw.y<nose.y)s++;}
+    if(kpOk(rw)&&kpOk(nose)){n++;if(rw.y<nose.y)s++;}
+    // Wrists close together (arms up together)
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)<sw*0.8)s++;
+    }
+    // Ankles close together (standing tall)
+    if(kpOk(la)&&kpOk(ra)){
+        const hw=kpOk(kp[11])&&kpOk(kp[12])?Math.abs(kp[11].x-kp[12].x):60;
+        n++;if(Math.abs(la.x-ra.x)<hw*2)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkCrabWalk(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
+    const lh=kp[11],rh=kp[12],lk=kp[13],rk=kp[14];
+    const la=kp[15],ra=kp[16];
+    // Squatting: hips close to knees
+    if(kpOk(lh)&&kpOk(lk)&&kpOk(ls)){
+        const torso=Math.abs(lh.y-ls.y);
+        n++;if(Math.abs(lk.y-lh.y)<torso*0.7)s++;
+    }
+    // Arms spread wide
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)>sw*1.3)s++;
+    }
+    // Legs spread wide
+    if(kpOk(la)&&kpOk(ra)&&kpOk(lh)&&kpOk(rh)){
+        const hw=Math.abs(lh.x-rh.x);
+        n++;if(Math.abs(la.x-ra.x)>Math.max(hw*1.2,35))s++;
+    }
+    return n?s/n:0;
+}
+
+function checkBallet(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6],nose=kp[0];
+    const le=kp[7],re=kp[8];
+    // Both wrists above head
+    if(kpOk(lw)&&kpOk(nose)){n++;if(lw.y<nose.y)s++;}
+    if(kpOk(rw)&&kpOk(nose)){n++;if(rw.y<nose.y)s++;}
+    // Wrists close together (forming circle top)
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)<sw*1.0)s++;
+    }
+    // Elbows out wide (circle shape)
+    if(kpOk(le)&&kpOk(re)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(le.x-re.x)>sw*1.1)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkWideSquat(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6];
+    const lh=kp[11],rh=kp[12],lk=kp[13],rk=kp[14];
+    const la=kp[15],ra=kp[16],nose=kp[0];
+    // Squatting: hips close to knees
+    if(kpOk(lh)&&kpOk(lk)&&kpOk(ls)){
+        const torso=Math.abs(lh.y-ls.y);
+        n++;if(Math.abs(lk.y-lh.y)<torso*0.7)s++;
+    }
+    // Legs/ankles wide apart
+    if(kpOk(la)&&kpOk(ra)&&kpOk(lh)&&kpOk(rh)){
+        const hw=Math.abs(lh.x-rh.x);
+        n++;if(Math.abs(la.x-ra.x)>Math.max(hw*1.3,40))s++;
+    }
+    // Arms out (not at sides)
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)>sw*1.2)s++;
+    }
+    // Head above hips (not fully bending)
+    if(kpOk(nose)&&kpOk(lh)){n++;if(nose.y<lh.y)s++;}
+    return n?s/n:0;
+}
+
+function checkDisco(kp){
+    let s=0, n=0;
+    const lw=kp[9],rw=kp[10],ls=kp[5],rs=kp[6],nose=kp[0];
+    const lh=kp[11],rh=kp[12];
+    // One arm above nose, one below hips (pointing up/down)
+    const lUp=kpOk(lw)&&kpOk(nose)&&lw.y<nose.y;
+    const rUp=kpOk(rw)&&kpOk(nose)&&rw.y<nose.y;
+    const lDown=kpOk(lw)&&kpOk(lh)&&lw.y>lh.y;
+    const rDown=kpOk(rw)&&kpOk(rh)&&rw.y>rh.y;
+    n++;if((lUp&&rDown)||(rUp&&lDown))s++;
+    // Arms spread apart
+    if(kpOk(lw)&&kpOk(rw)&&kpOk(ls)&&kpOk(rs)){
+        const sw=Math.abs(ls.x-rs.x);
+        n++;if(Math.abs(lw.x-rw.x)>sw*0.8)s++;
+    }
+    // Big height difference between wrists
+    if(kpOk(lw)&&kpOk(rw)){
+        const diff=Math.abs(lw.y-rw.y);
+        const bodyH=kpOk(ls)&&kpOk(lh)?Math.abs(lh.y-ls.y):150;
+        n++;if(diff>bodyH*0.6)s++;
+    }
+    return n?s/n:0;
+}
+
 // --- Multiplayer pose checks ---
 
 function checkHighFive(allPoses){
@@ -1091,6 +1292,125 @@ function checkGroupHug(allPoses){
         }
     }
 
+    return n?s/n:0;
+}
+
+// --- Additional multiplayer pose checks ---
+
+function checkMirrorPose(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkMirrorPair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkMirrorPair(kp1,kp2){
+    let s=0, n=0;
+    const lw1=kp1[9],rw1=kp1[10],ls1=kp1[5],rs1=kp1[6];
+    const lw2=kp2[9],rw2=kp2[10],ls2=kp2[5],rs2=kp2[6];
+    // Both have arms out wide
+    if(kpOk(lw1)&&kpOk(rw1)&&kpOk(ls1)&&kpOk(rs1)){
+        const sw=Math.abs(ls1.x-rs1.x);
+        n++;if(Math.abs(lw1.x-rw1.x)>sw*1.3)s++;
+    }
+    if(kpOk(lw2)&&kpOk(rw2)&&kpOk(ls2)&&kpOk(rs2)){
+        const sw=Math.abs(ls2.x-rs2.x);
+        n++;if(Math.abs(lw2.x-rw2.x)>sw*1.3)s++;
+    }
+    // Both wrists at roughly same height (mirroring)
+    if(kpOk(lw1)&&kpOk(rw1)&&kpOk(lw2)&&kpOk(rw2)){
+        const avgH1=(lw1.y+rw1.y)/2, avgH2=(lw2.y+rw2.y)/2;
+        const bodyH=kpOk(ls1)&&kpOk(kp1[11])?Math.abs(kp1[11].y-ls1.y):150;
+        n++;if(Math.abs(avgH1-avgH2)<bodyH*0.5)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkBackToBack(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkBackToBackPair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkBackToBackPair(kp1,kp2){
+    let s=0, n=0;
+    const ls1=kp1[5],rs1=kp1[6],ls2=kp2[5],rs2=kp2[6];
+    const lh1=kp1[11],rh1=kp1[12],lh2=kp2[11],rh2=kp2[12];
+    // Shoulders close together (bodies near each other)
+    if(kpOk(ls1)&&kpOk(rs1)&&kpOk(ls2)&&kpOk(rs2)){
+        const c1x=(ls1.x+rs1.x)/2, c2x=(ls2.x+rs2.x)/2;
+        const c1y=(ls1.y+rs1.y)/2, c2y=(ls2.y+rs2.y)/2;
+        const bw=Math.abs(ls1.x-rs1.x);
+        n++;if(Math.abs(c1x-c2x)<bw*4)s++;
+        // Shoulders at similar height
+        n++;if(Math.abs(c1y-c2y)<bw*2)s++;
+    }
+    // Hips close
+    if(kpOk(lh1)&&kpOk(rh1)&&kpOk(lh2)&&kpOk(rh2)){
+        const hc1x=(lh1.x+rh1.x)/2, hc2x=(lh2.x+rh2.x)/2;
+        const bw=kpOk(ls1)&&kpOk(rs1)?Math.abs(ls1.x-rs1.x):80;
+        n++;if(Math.abs(hc1x-hc2x)<bw*4)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkWaveTogether(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkWaveTogetherPair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkWaveTogetherPair(kp1,kp2){
+    let s=0, n=0;
+    const nose1=kp1[0],nose2=kp2[0];
+    // Player 1: at least one wrist above nose
+    const w1=[kp1[9],kp1[10]].filter(kpOk);
+    if(w1.length&&kpOk(nose1)){
+        n++;if(w1.some(w=>w.y<nose1.y))s++;
+    }
+    // Player 2: at least one wrist above nose
+    const w2=[kp2[9],kp2[10]].filter(kpOk);
+    if(w2.length&&kpOk(nose2)){
+        n++;if(w2.some(w=>w.y<nose2.y))s++;
+    }
+    // Both have arms up at similar height
+    if(w1.length&&w2.length){
+        const minY1=Math.min(...w1.map(w=>w.y));
+        const minY2=Math.min(...w2.map(w=>w.y));
+        const bodyH=kpOk(kp1[5])&&kpOk(kp1[11])?Math.abs(kp1[11].y-kp1[5].y):150;
+        n++;if(Math.abs(minY1-minY2)<bodyH*0.6)s++;
+    }
+    return n?s/n:0;
+}
+
+function checkSideBySide(allPoses){
+    let best=0;
+    for(let i=0;i<allPoses.length;i++)
+        for(let j=i+1;j<allPoses.length;j++)
+            best=Math.max(best,checkSideBySidePair(allPoses[i].keypoints,allPoses[j].keypoints));
+    return best;
+}
+function checkSideBySidePair(kp1,kp2){
+    let s=0, n=0;
+    const ls1=kp1[5],rs1=kp1[6],ls2=kp2[5],rs2=kp2[6];
+    const lw1=kp1[9],rw1=kp1[10],lw2=kp2[9],rw2=kp2[10];
+    // Standing next to each other (shoulder centers within range)
+    if(kpOk(ls1)&&kpOk(rs1)&&kpOk(ls2)&&kpOk(rs2)){
+        const c1x=(ls1.x+rs1.x)/2, c2x=(ls2.x+rs2.x)/2;
+        const bw=Math.abs(ls1.x-rs1.x);
+        n++;if(Math.abs(c1x-c2x)<bw*6)s++;
+    }
+    // At least one wrist above nose for each player
+    if(kpOk(kp1[0])){
+        const wrists=[lw1,rw1].filter(kpOk);
+        if(wrists.length){n++;if(wrists.some(w=>w.y<kp1[0].y))s++;}
+    }
+    if(kpOk(kp2[0])){
+        const wrists=[lw2,rw2].filter(kpOk);
+        if(wrists.length){n++;if(wrists.some(w=>w.y<kp2[0].y))s++;}
+    }
     return n?s/n:0;
 }
 
@@ -1567,6 +1887,109 @@ function getPoseSVG(id){
             ${head(180,62)}${hand(220,70)}${foot(158,268)}${foot(202,268)}
             ${hand(170,110)}${hand(110,110)}
             <text x="140" y="48" text-anchor="middle" font-size="22">🤗</text>
+        </svg>`,
+
+        wave_hello: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,145,20)}${limb(100,95,55,120)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
+            ${head(100,58)}${hand(145,20)}${hand(55,120)}
+            ${foot(78,264)}${foot(122,264)}
+            <text x="155" y="16" text-anchor="middle" font-size="18">👋</text>
+        </svg>`,
+
+        tree_pose: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,90,15)}${limb(100,95,110,15)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,90,260,'#FF6B9D')}${limb(100,175,110,260,'#FF6B9D')}
+            ${head(100,58)}${hand(90,15)}${hand(110,15)}
+            ${foot(90,264)}${foot(110,264)}
+            <text x="100" y="10" text-anchor="middle" font-size="18">🌳</text>
+        </svg>`,
+
+        crab_walk: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,165,30,140)}${limb(100,165,170,140)}
+            ${limb(100,150,100,190)}
+            ${limb(100,190,55,258,'#FF6B9D')}${limb(100,190,145,258,'#FF6B9D')}
+            ${head(100,130)}${hand(30,140)}${hand(170,140)}
+            ${foot(55,262)}${foot(145,262)}
+            <text x="100" y="115" text-anchor="middle" font-size="18">🦀</text>
+        </svg>`,
+
+        ballet: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,60,40)}${limb(100,95,140,40)}
+            ${limb(60,40,95,15)}${limb(140,40,105,15)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
+            ${head(100,58)}${hand(95,15)}${hand(105,15)}
+            ${foot(78,264)}${foot(122,264)}
+            <text x="100" y="10" text-anchor="middle" font-size="16">🩰</text>
+        </svg>`,
+
+        wide_squat: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,140,30,120)}${limb(100,140,170,120)}
+            ${limb(100,120,100,180)}
+            ${limb(100,180,40,258,'#FF6B9D')}${limb(100,180,160,258,'#FF6B9D')}
+            ${head(100,100)}${hand(30,120)}${hand(170,120)}
+            ${foot(40,262)}${foot(160,262)}
+            <text x="100" y="82" text-anchor="middle" font-size="16">🏋️</text>
+        </svg>`,
+
+        disco: `<svg viewBox="0 0 200 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,95,145,15)}${limb(100,95,55,200)}
+            ${limb(100,95,100,175)}
+            ${limb(100,175,78,260,'#FF6B9D')}${limb(100,175,122,260,'#FF6B9D')}
+            ${head(100,58)}${hand(145,15)}${hand(55,200)}
+            ${foot(78,264)}${foot(122,264)}
+            <text x="148" y="12" text-anchor="middle" font-size="18">🕺</text>
+        </svg>`,
+
+        mirror_pose: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(80,100,10,70)}${limb(80,100,150,70)}
+            ${limb(80,100,80,180)}
+            ${limb(80,180,58,264,'#FF6B9D')}${limb(80,180,102,264,'#FF6B9D')}
+            ${head(80,62)}${hand(10,70)}${hand(150,70)}${foot(58,268)}${foot(102,268)}
+            ${limb(240,100,170,70,'#4ECDC4')}${limb(240,100,310,70,'#4ECDC4')}
+            ${limb(240,100,240,180,'#4ECDC4')}
+            ${limb(240,180,218,264,'#FF6B9D')}${limb(240,180,262,264,'#FF6B9D')}
+            ${head(240,62)}${hand(170,70)}${hand(310,70)}${foot(218,268)}${foot(262,268)}
+            <text x="160" y="50" text-anchor="middle" font-size="18">🪞</text>
+        </svg>`,
+
+        back_to_back: `<svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(110,100,60,65)}${limb(110,100,80,135)}
+            ${limb(110,100,110,180)}
+            ${limb(110,180,88,264,'#FF6B9D')}${limb(110,180,132,264,'#FF6B9D')}
+            ${head(100,62)}${hand(60,65)}${hand(80,135)}${foot(88,268)}${foot(132,268)}
+            ${limb(170,100,220,65,'#4ECDC4')}${limb(170,100,200,135,'#4ECDC4')}
+            ${limb(170,100,170,180,'#4ECDC4')}
+            ${limb(170,180,148,264,'#FF6B9D')}${limb(170,180,192,264,'#FF6B9D')}
+            ${head(180,62)}${hand(220,65)}${hand(200,135)}${foot(148,268)}${foot(192,268)}
+            <text x="140" y="50" text-anchor="middle" font-size="18">🔙</text>
+        </svg>`,
+
+        wave_together: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(80,100,40,20)}${limb(80,100,30,100)}
+            ${limb(80,100,80,180)}
+            ${limb(80,180,58,264,'#FF6B9D')}${limb(80,180,102,264,'#FF6B9D')}
+            ${head(80,62)}${hand(40,20)}${hand(30,100)}${foot(58,268)}${foot(102,268)}
+            ${limb(240,100,280,20,'#4ECDC4')}${limb(240,100,290,100,'#4ECDC4')}
+            ${limb(240,100,240,180,'#4ECDC4')}
+            ${limb(240,180,218,264,'#FF6B9D')}${limb(240,180,262,264,'#FF6B9D')}
+            ${head(240,62)}${hand(280,20)}${hand(290,100)}${foot(218,268)}${foot(262,268)}
+            <text x="160" y="18" text-anchor="middle" font-size="18">👐</text>
+        </svg>`,
+
+        side_by_side: `<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+            ${limb(100,100,50,25)}${limb(100,100,148,120)}
+            ${limb(100,100,100,180)}
+            ${limb(100,180,78,264,'#FF6B9D')}${limb(100,180,122,264,'#FF6B9D')}
+            ${head(100,62)}${hand(50,25)}${hand(148,120)}${foot(78,268)}${foot(122,268)}
+            ${limb(220,100,172,120,'#4ECDC4')}${limb(220,100,270,25,'#4ECDC4')}
+            ${limb(220,100,220,180,'#4ECDC4')}
+            ${limb(220,180,198,264,'#FF6B9D')}${limb(220,180,242,264,'#FF6B9D')}
+            ${head(220,62)}${hand(172,120)}${hand(270,25)}${foot(198,268)}${foot(242,268)}
+            <text x="160" y="110" text-anchor="middle" font-size="18">🤜🤛</text>
         </svg>`,
     };
     return defs[id] || '';
