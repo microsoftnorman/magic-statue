@@ -265,6 +265,8 @@ async function beginSetup() {
         await initDetector();
         S.modelReady = true;
         markSetupDone('setup-model', '🪄 Magic loaded!');
+        // Players may already be detected before model was ready — recheck
+        if (S.playersFound > 0) checkReady();
     } catch (e) {
         console.error(e);
         markSetupDone('setup-model', '🪄 Could not load magic ✘');
