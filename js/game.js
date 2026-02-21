@@ -246,7 +246,7 @@ async function beginSetup() {
         await initCamera();
         S.cameraReady = true;
         markSetupDone('setup-camera', '📷 Camera ready!');
-        // Camera permission prompt counts as user gesture — start music now
+        // Unlock audio context within camera-permission gesture so narration works
         _unlockBgAudio();
         narrate('loading_models', "I'm getting ready to play with you! Loading my super smart brain right now. Get ready to have SO much fun!");
     } catch (e) {
@@ -295,10 +295,6 @@ function pickPoses() {
 async function startGame() {
     if (!S.ready) return;
     cancelTitlePreview();
-
-    // Unlock audio within the synchronous user-gesture context
-    _unlockBgAudio();
-    startBgMusic();
 
     // Kid-friendly game explanation — wait for each sentence to finish
     narrate('welcome', "Hi there! Welcome to the Museum of Fun Art! I'll show you a silly pose, and you copy it with your body!");
@@ -687,6 +683,7 @@ async function runCountdown() {
 
 async function startPoseIntro() {
     S.phase = 'preview';
+    startBgMusic();
     const pose = currentPose();
     setPoseUI(pose);
     updateProgressDots();
