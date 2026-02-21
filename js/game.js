@@ -160,7 +160,7 @@ const POSES = [
 
 // ─── DEBUG STATS ──────────────────────────────
 const DBG = {
-    show: true,
+    show: new URLSearchParams(window.location.search).get('debug') === 'y',
     frames: 0,
     fps: 0,
     detections: 0,
