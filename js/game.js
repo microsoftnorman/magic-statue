@@ -371,8 +371,24 @@ function checkReady() {
         const btn = $('btn-play');
         btn.disabled = false;
         btn.classList.remove('btn-disabled');
-        btn.textContent = '▶ PLAY!';
+        // Auto-start countdown
+        autoStartCountdown(btn);
     }
+}
+
+function autoStartCountdown(btn) {
+    let count = 3;
+    btn.textContent = count;
+    const id = setInterval(() => {
+        count--;
+        if (count > 0) {
+            btn.textContent = count;
+        } else {
+            clearInterval(id);
+            btn.textContent = '▶ GO!';
+            startGame();
+        }
+    }, 1000);
 }
 
 // ─── CAMERA ───────────────────────────────────
