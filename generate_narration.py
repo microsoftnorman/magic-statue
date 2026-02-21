@@ -11,6 +11,11 @@ LINES = {
     # ── Setup / camera ──
     "camera_ready":     "Camera is ready! I can see you!",
     "step_in":          "Step in front of the camera so I can see you!",
+    "need_full_body":   "I need to see your whole body! Make sure I can see your head, arms, AND feet! Step back a little!",
+    "loading_models":   "Ooh, I'm getting ready to play with you! I'm loading my super smart brain right now. "
+                        "Get ready to have SO much fun! "
+                        "And guess what? Everything stays right here on YOUR computer, nothing goes anywhere else! "
+                        "Oh, and make sure it's okay with your mom or dad before you play. Alright, almost ready!",
 
     # ── Game intro ──
     "welcome":          "Hi there! Welcome to the Museum of Fun Art! I'll show you a silly pose, and you copy it with your body!",
@@ -96,6 +101,9 @@ LINES = {
 
     # ── No player ──
     "cant_see":         "I can't see you! Come stand in front of the camera!",
+
+    # ── Victory play again ──
+    "play_again_ask":   "Want to play again? Raise your hands up high if you want to play again!",
 }
 
 

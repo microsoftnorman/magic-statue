@@ -207,9 +207,9 @@ const S = {
     lastFrameTime: 0,
     mediaRecorder: null,
     recordedChunks: [],
-    autoCountdownId: null,
     lastEncourageTime: 0,
     lastEncourageMsg: '',
+    lastHintTime: 0,
     noPlayerFrames: 0,
 };
 
@@ -246,7 +246,9 @@ async function beginSetup() {
         await initCamera();
         S.cameraReady = true;
         markSetupDone('setup-camera', '📷 Camera ready!');
-        narrate('camera_ready', 'Camera is ready! I can see you!');
+        // Camera permission prompt counts as user gesture — start music now
+        _unlockBgAudio();
+        narrate('loading_models', "I'm getting ready to play with you! Loading my super smart brain right now. Get ready to have SO much fun!");
     } catch (e) {
         console.error(e);
         markSetupDone('setup-camera', '📷 Camera not available ✘');
@@ -256,7 +258,6 @@ async function beginSetup() {
 
     // Start title preview loop
     startTitlePreview();
-    startPosePreviewCycle();
     show($('setup-tips'));
 
     // 2) Model
@@ -291,13 +292,11 @@ function pickPoses() {
 
 async function startGame() {
     if (!S.ready) return;
-    // Clear auto-countdown if running
-    if (S.autoCountdownId) { clearInterval(S.autoCountdownId); S.autoCountdownId = null; }
-    hide($('auto-countdown'));
     cancelTitlePreview();
 
     // Unlock audio within the synchronous user-gesture context
     _unlockBgAudio();
+    startBgMusic();
 
     // Kid-friendly game explanation — wait for each sentence to finish
     narrate('welcome', "Hi there! Welcome to the Museum of Fun Art! I'll show you a silly pose, and you copy it with your body!");
@@ -317,11 +316,11 @@ async function startGame() {
     showScreen('screen-game');
     buildProgressDots();
     buildScoreboard();
-    startBgMusic();
     runCountdown();
 }
 
 function restartGame() {
+    stopPlayAgainDetection();
     // Clean up any in-progress video recording
     if (S.mediaRecorder && S.mediaRecorder.state !== 'inactive') {
         try { S.mediaRecorder.stop(); } catch(e) {}
@@ -352,7 +351,6 @@ function restartGame() {
     showScreen('screen-game');
     buildProgressDots();
     buildScoreboard();
-    startBgMusic();
     setTimeout(() => runCountdown(), 1500);
 }
 
@@ -372,38 +370,7 @@ function checkReady() {
         btn.disabled = false;
         btn.classList.remove('btn-disabled');
         btn.textContent = '▶ PLAY!';
-        // Auto-start countdown instead of waiting for button press
-        startAutoCountdown();
     }
-}
-
-function startAutoCountdown() {
-    const el = $('auto-countdown');
-    const textEl = $('auto-countdown-text');
-    if (!el || !textEl) { startGame(); return; }
-    show(el);
-    narrate('anyone_else', 'I can see you! Anyone else want to play? Jump in front of the camera!');
-    let sec = 5;
-    textEl.textContent = 'Starting in ' + sec + '…';
-    S.autoCountdownId = setInterval(() => {
-        sec--;
-        if (sec > 0) {
-            textEl.textContent = 'Starting in ' + sec + '…';
-            if (sec === 3) {
-                if (S.playersFound > 1) {
-                    const pKey = 'players_' + Math.min(S.playersFound, 4);
-                    narrate(pKey, S.playersFound + ' players ready! Here we go!');
-                } else {
-                    narrate('last_chance', 'Last chance to join!');
-                }
-            }
-        } else {
-            clearInterval(S.autoCountdownId);
-            S.autoCountdownId = null;
-            hide(el);
-            startGame();
-        }
-    }, 1000);
 }
 
 // ─── CAMERA ───────────────────────────────────
@@ -446,31 +413,120 @@ function startTitlePreview() {
 }
 function cancelTitlePreview() {
     if (S.titleAnimId) { cancelAnimationFrame(S.titleAnimId); S.titleAnimId = null; }
-    stopPosePreviewCycle();
 }
 
-// ─── POSE PREVIEW CYCLE (title screen) ───────
-let posePreviewTimer = null;
-function startPosePreviewCycle() {
-    const charEl = $('pose-preview-character');
-    const labelEl = $('pose-preview-label');
-    if (!charEl || !labelEl) return;
-    const solo = POSES.filter(p => !p.multiPlayer);
-    let idx = 0;
-    function showNext() {
-        const pose = solo[idx % solo.length];
-        charEl.innerHTML = getPoseSVG(pose.id);
-        charEl.style.animation = 'none';
-        void charEl.offsetWidth;
-        charEl.style.animation = '';
-        labelEl.textContent = pose.emoji + ' ' + pose.name;
-        idx++;
+// ─── DEMO SKELETON SYSTEM (title screen) ─────
+// Normalized keypoint offsets from figure center [dx, dy], scale ~1.0 = full figure
+const _DEMO_POSES = [
+    // Starfish – arms wide-up, legs wide
+    [[0,-.72],[-.04,-.76],[.04,-.76],[-.07,-.74],[.07,-.74],
+     [-.18,-.48],[.18,-.48],[-.40,-.56],[.40,-.56],[-.58,-.68],[.58,-.68],
+     [-.08,-.02],[.08,-.02],[-.22,.30],[.22,.30],[-.32,.62],[.32,.62]],
+    // Reach High – both arms up
+    [[0,-.72],[-.04,-.76],[.04,-.76],[-.07,-.74],[.07,-.74],
+     [-.13,-.48],[.13,-.48],[-.10,-.66],[.10,-.66],[-.06,-.85],[.06,-.85],
+     [-.08,-.02],[.08,-.02],[-.09,.30],[.09,.30],[-.10,.62],[.10,.62]],
+    // Airplane – arms horizontal
+    [[0,-.72],[-.04,-.76],[.04,-.76],[-.07,-.74],[.07,-.74],
+     [-.14,-.48],[.14,-.48],[-.38,-.48],[.38,-.48],[-.60,-.48],[.60,-.48],
+     [-.08,-.02],[.08,-.02],[-.09,.30],[.09,.30],[-.10,.62],[.10,.62]],
+    // Disco – one arm up, one down
+    [[0,-.72],[-.04,-.76],[.04,-.76],[-.07,-.74],[.07,-.74],
+     [-.14,-.48],[.14,-.48],[-.08,-.66],[.30,-.30],[-.02,-.82],[.40,-.12],
+     [-.06,-.02],[.10,-.02],[-.08,.30],[.12,.30],[-.08,.62],[.14,.62]],
+    // Superhero – hands on hips
+    [[0,-.72],[-.04,-.76],[.04,-.76],[-.07,-.74],[.07,-.74],
+     [-.16,-.48],[.16,-.48],[-.24,-.28],[.24,-.28],[-.14,-.06],[.14,-.06],
+     [-.10,-.02],[.10,-.02],[-.13,.30],[.13,.30],[-.14,.62],[.14,.62]],
+];
+
+const _demoFigures = [
+    { cx: 0.25, cy: 0.50, scale: 155, ci: 0, from: 0, to: 1, t: 0, spd: 0.006 },
+    { cx: 0.50, cy: 0.48, scale: 175, ci: 1, from: 2, to: 3, t: 0, spd: 0.005 },
+    { cx: 0.75, cy: 0.50, scale: 155, ci: 3, from: 4, to: 0, t: 0, spd: 0.007 },
+];
+
+// Floating particles
+const _titleParts = [];
+let _partsInited = false;
+
+function _initParticles(w, h) {
+    _titleParts.length = 0;
+    for (let i = 0; i < 40; i++) {
+        _titleParts.push({
+            x: Math.random() * w,
+            y: Math.random() * h,
+            vx: (Math.random() - 0.5) * 0.4,
+            vy: -Math.random() * 0.6 - 0.2,
+            sz: Math.random() * 3 + 1,
+            a: Math.random() * 0.4 + 0.1,
+            c: PLAYER_COLORS[Math.random() * 4 | 0],
+        });
     }
-    showNext();
-    posePreviewTimer = setInterval(showNext, 2500);
+    _partsInited = true;
 }
-function stopPosePreviewCycle() {
-    if (posePreviewTimer) { clearInterval(posePreviewTimer); posePreviewTimer = null; }
+
+function _drawParticles(ctx, w, h) {
+    for (const p of _titleParts) {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.y < -10) { p.y = h + 10; p.x = Math.random() * w; }
+        if (p.x < -10) p.x = w + 10;
+        if (p.x > w + 10) p.x = -10;
+        ctx.globalAlpha = p.a;
+        ctx.fillStyle = p.c;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.sz, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}
+
+function _easeInOut(t) { return t < 0.5 ? 2*t*t : 1 - 2*(1-t)*(1-t); }
+
+function _buildDemoKp(fig, w, h) {
+    const from = _DEMO_POSES[fig.from], to = _DEMO_POSES[fig.to];
+    const e = _easeInOut(fig.t);
+    const kp = [];
+    for (let i = 0; i < 17; i++) {
+        kp.push({
+            x: fig.cx * w + (from[i][0] + (to[i][0] - from[i][0]) * e) * fig.scale,
+            y: fig.cy * h + (from[i][1] + (to[i][1] - from[i][1]) * e) * fig.scale,
+            score: 1.0,
+        });
+    }
+    return kp;
+}
+
+function _drawDemoSkeletons(ctx, w, h) {
+    for (const fig of _demoFigures) {
+        fig.t += fig.spd;
+        if (fig.t >= 1) {
+            fig.t = 0;
+            fig.from = fig.to;
+            fig.to = (fig.to + 1 + (Math.random() * (_DEMO_POSES.length - 1) | 0)) % _DEMO_POSES.length;
+        }
+        // Ground shadow
+        const feetY = fig.cy * h + fig.scale * 0.65;
+        ctx.globalAlpha = 0.12;
+        ctx.fillStyle = PLAYER_COLORS[fig.ci];
+        ctx.beginPath();
+        ctx.ellipse(fig.cx * w, feetY, fig.scale * 0.22, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        // Skeleton
+        drawSkeleton(_buildDemoKp(fig, w, h), PLAYER_COLORS[fig.ci], ctx);
+    }
+}
+
+let _fullBodyHintTime = 0;
+
+function _hasFullBody(kp, conf) {
+    // Check head (nose=0), at least one wrist (9,10), at least one ankle (15,16)
+    const head = kp[0].score > conf;
+    const arms = kp[9].score > conf || kp[10].score > conf;
+    const feet = kp[15].score > conf || kp[16].score > conf;
+    return head && arms && feet;
 }
 
 async function titleDetect() {
@@ -491,20 +547,56 @@ async function titleDetect() {
                 // Players left, but game stays ready
             }
         }
+        // Hint if player visible but missing key body parts
+        if (count > 0 && !S.ready) {
+            const now = performance.now();
+            let allFull = true;
+            for (let i = 0; i < count; i++) {
+                if (!_hasFullBody(S.detected[i].keypoints, CFG.confidence)) { allFull = false; break; }
+            }
+            if (!allFull && now - _fullBodyHintTime > 12000) {
+                _fullBodyHintTime = now;
+                narrate('need_full_body', 'I need to see your whole body! Make sure I can see your head, arms, AND feet!');
+            }
+        }
     } catch(_){}
     S.titleDetecting = false;
 }
 
 function drawTitlePreview() {
-    const ctx = S.titleCtx, canvas = S.titleCanvas, video = S.video;
-    if (!ctx || !video || video.readyState < 2) return;
+    const ctx = S.titleCtx, canvas = S.titleCanvas;
+    if (!ctx) return;
+    const w = canvas.width, h = canvas.height;
+    const video = S.video;
+    // Only show live camera once model is ready (so detection works, no freeze)
+    const showLive = S.modelReady && video && video.readyState >= 2;
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if (showLive) {
+        ctx.drawImage(video, 0, 0, w, h);
+    } else {
+        if (!S._titleGrad) {
+            S._titleGrad = ctx.createLinearGradient(0, 0, w, h);
+            S._titleGrad.addColorStop(0, '#1a0a2e');
+            S._titleGrad.addColorStop(0.5, '#16213e');
+            S._titleGrad.addColorStop(1, '#0f3460');
+        }
+        ctx.fillStyle = S._titleGrad;
+        ctx.fillRect(0, 0, w, h);
+    }
 
+    // Floating particles
+    if (!_partsInited) _initParticles(w, h);
+    _drawParticles(ctx, w, h);
+
+    // Real skeletons or animated demos
     const poses = S.detected;
-    const count = Math.min(poses.length, 4);
-    for (let i = 0; i < count; i++) {
-        drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length], ctx);
+    const count = Math.min(poses ? poses.length : 0, 4);
+    if (count > 0) {
+        for (let i = 0; i < count; i++) {
+            drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length], ctx);
+        }
+    } else if (!showLive) {
+        _drawDemoSkeletons(ctx, w, h);
     }
 }
 
@@ -513,7 +605,9 @@ function updatePlayerBubbles(count) {
     if (!el) return;
     el.innerHTML = '';
     if (count === 0) {
-        el.innerHTML = '<span class="no-players">👀 No players yet — step in front of the camera!</span>';
+        el.innerHTML = '<span class="no-players">\ud83d\udc40 No players yet \u2014 step in front of the camera!</span>';
+        const invite = $('frame-invite');
+        if (invite) invite.textContent = '\u2728 Step in front of the camera! \u2728';
         return;
     }
     for (let i = 0; i < count; i++) {
@@ -523,6 +617,8 @@ function updatePlayerBubbles(count) {
         b.textContent = 'P' + (i+1);
         el.appendChild(b);
     }
+    const invite = $('frame-invite');
+    if (invite) invite.textContent = '\ud83c\udfa8 That\u2019s you! Press PLAY to start!';
 }
 
 // ─── POSE DETECTOR ────────────────────────────
@@ -603,6 +699,7 @@ function beginMatching() {
     S.holdAccum = 0;
     S.lastFrameTime = performance.now();
     S.poseStartTime = performance.now();
+    S.lastHintTime = 0;
     _lastGlowClass = '';
     hide(DOM['hold-overlay']||$('hold-overlay'));
     hide(DOM['statue-flash']||$('statue-flash'));
@@ -821,17 +918,60 @@ function buildFinalScores() {
 function showVictory() {
     S.phase = 'victory';
     cancelLoop();
-    stopBgMusic();
     showScreen('screen-victory');
     playChord(); setTimeout(()=>playChord(),400);
     const streakMsg = S.bestStreak >= 3 ? ' Best streak: ' + S.bestStreak + ' in a row!' : '';
     const vClip = S.bestStreak >= 3 ? 'victory_streak' + Math.min(S.bestStreak, 8) : 'victory';
     narrate(vClip, 'You did ALL the poses! You are a Fun Art Superstar!' + streakMsg);
     buildFinalScores();
-    // Start replay slideshow, then show gallery after
+    // Start replay slideshow, then show gallery + ask to play again
     startReplaySlideshow(() => {
         buildGallery();
+        // After slideshow, ask if they want to play again via gesture
+        setTimeout(() => startPlayAgainDetection(), 1500);
     });
+}
+
+// ─── PLAY AGAIN GESTURE DETECTION ─────────────
+let _playAgainDetectId = null;
+let _playAgainAsked = false;
+
+function startPlayAgainDetection() {
+    stopPlayAgainDetection();
+    _playAgainAsked = false;
+    // Keep detecting poses on victory screen
+    _playAgainDetectId = setInterval(async () => {
+        if (!S.detector || !S.video || S.video.readyState < 2) return;
+        try {
+            S.detected = await S.detector.estimatePoses(S.video);
+        } catch(_) { return; }
+        const poses = S.detected;
+        const count = Math.min(poses ? poses.length : 0, 4);
+        if (count === 0) return;
+
+        if (!_playAgainAsked) {
+            _playAgainAsked = true;
+            narrate('play_again_ask', 'Want to play again? Raise your hands up high!');
+            return;
+        }
+
+        // Check if any player has both wrists above their nose
+        const conf = CFG.confidence;
+        for (let i = 0; i < count; i++) {
+            const kp = poses[i].keypoints;
+            const nose = kp[0], lw = kp[9], rw = kp[10];
+            if (nose.score > conf && lw.score > conf && rw.score > conf &&
+                lw.y < nose.y && rw.y < nose.y) {
+                stopPlayAgainDetection();
+                restartGame();
+                return;
+            }
+        }
+    }, 200);
+}
+
+function stopPlayAgainDetection() {
+    if (_playAgainDetectId) { clearInterval(_playAgainDetectId); _playAgainDetectId = null; }
 }
 
 // ─── MAIN GAME LOOP ──────────────────────────
@@ -1705,6 +1845,14 @@ function updateEncouragement(playerCount) {
 
     if (phase !== 'matching' && phase !== 'holding') return;
 
+    // Hint: if score is low for a while, remind the player of the pose
+    const elapsed = now - S.poseStartTime;
+    if (phase === 'matching' && score < 0.25 && elapsed > 8000 && now - S.lastHintTime > 10000) {
+        S.lastHintTime = now;
+        const pose = currentPose();
+        narrate('hint_' + pose.id, "I don't see it yet, you can do it! Try " + pose.name);
+    }
+
     const score = S.smoothScore;
     let msg = '';
 
@@ -1907,6 +2055,7 @@ function hideCombo(){
 
 // ─── NARRATOR (pre-recorded MP3 clips) ─────────
 let _narratorAudio = null;
+let _narratorPlaying = false;
 let narratorTimeout = null;
 const _NARRATOR_DIR = 'audio/narrator/';
 
@@ -1937,18 +2086,19 @@ function narrate(clipId, subtitle) {
     // Play MP3 clip
     if (!_narratorAudio) _narratorAudio = new Audio();
     _narratorAudio.pause();
+    _narratorPlaying = false;
     _narratorAudio.src = _NARRATOR_DIR + clipId + '.mp3';
     _narratorAudio.currentTime = 0;
-    _narratorAudio.onended = () => { unduckMusic(); };
-    _narratorAudio.onerror = () => { unduckMusic(); };
-    _narratorAudio.play().catch(() => { unduckMusic(); });
+    _narratorAudio.onended = () => { _narratorPlaying = false; unduckMusic(); };
+    _narratorAudio.onerror = () => { _narratorPlaying = false; unduckMusic(); };
+    _narratorAudio.play().then(() => { _narratorPlaying = true; }).catch(() => { _narratorPlaying = false; unduckMusic(); });
 }
 
 // ─── BACKGROUND MUSIC (HTML5 Audio – lightweight, no Web Audio overhead) ─
 let _bgAudio = null;
 const _BGM_PATH = 'audio/vivaldi-spring-allegro.mp3';
 const _BGM_VOLUME = 0.35;
-const _BGM_DUCK_VOLUME = 0.10;
+const _BGM_DUCK_VOLUME = 0.03;
 
 // Must be called synchronously from a user-gesture handler (click)
 // so the browser allows playback.
@@ -1958,8 +2108,9 @@ function _unlockBgAudio() {
         _bgAudio.loop = true;
         _bgAudio.preload = 'auto';
     }
-    _bgAudio.volume = 0;
-    _bgAudio.play().then(() => { _bgAudio.pause(); }).catch(() => {});
+    _bgAudio.currentTime = 0;
+    _bgAudio.volume = _BGM_VOLUME;
+    _bgAudio.play().catch(() => {});
 }
 
 function startBgMusic() {
@@ -1967,9 +2118,11 @@ function startBgMusic() {
         _bgAudio = new Audio(_BGM_PATH);
         _bgAudio.loop = true;
     }
-    _bgAudio.currentTime = 0;
-    _bgAudio.volume = _BGM_VOLUME;
-    _bgAudio.play().catch(e => console.warn('BG music play failed:', e));
+    if (_bgAudio.paused) {
+        _bgAudio.currentTime = 0;
+        _bgAudio.volume = _BGM_VOLUME;
+        _bgAudio.play().catch(e => console.warn('BG music play failed:', e));
+    }
 }
 function stopBgMusic() {
     if (!_bgAudio) return;
@@ -2038,7 +2191,17 @@ function stopCaptureStream() {
 // ─── SCREENSHOTS & GALLERY ───────────────────
 function captureScreenshot() {
     try {
-        const dataUrl = S.canvas.toDataURL('image/jpeg', 0.85);
+        // Use raw camera feed (no skeleton overlay)
+        const v = S.video;
+        if (!v || v.readyState < 2) return;
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        const cx = c.getContext('2d');
+        cx.translate(c.width, 0);
+        cx.scale(-1, 1);
+        cx.drawImage(v, 0, 0, c.width, c.height);
+        const dataUrl = c.toDataURL('image/jpeg', 0.85);
         S.screenshots.push({ image: dataUrl, pose: currentPose() });
     } catch(e) { console.warn('Screenshot failed:', e); }
 }
@@ -2542,7 +2705,7 @@ function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function waitForSpeech(maxMs) {
     maxMs = maxMs || 15000;
     return new Promise(resolve => {
-        if (!_narratorAudio || _narratorAudio.paused || _narratorAudio.ended) { resolve(); return; }
+        if (!_narratorPlaying) { resolve(); return; }
         const start = Date.now();
         const onDone = () => { cleanup(); resolve(); };
         const cleanup = () => {
@@ -2553,7 +2716,7 @@ function waitForSpeech(maxMs) {
         _narratorAudio.addEventListener('ended', onDone);
         _narratorAudio.addEventListener('error', onDone);
         const id = setInterval(() => {
-            if (_narratorAudio.paused || _narratorAudio.ended || Date.now() - start > maxMs) {
+            if (!_narratorPlaying || Date.now() - start > maxMs) {
                 cleanup(); resolve();
             }
         }, 200);

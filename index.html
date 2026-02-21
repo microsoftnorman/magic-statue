@@ -14,12 +14,6 @@
 
     <!-- ===== TITLE SCREEN ===== -->
     <div id="screen-title" class="screen active">
-        <!-- Live camera background on title -->
-        <div class="title-camera-bg">
-            <canvas id="title-canvas"></canvas>
-            <div class="title-camera-overlay"></div>
-        </div>
-
         <div class="screen-content title-content">
             <h1 class="game-title">
                 <span class="title-line0">GitHub Copilot</span>
@@ -27,6 +21,12 @@
                 <span class="title-line2">Fun Art!</span>
             </h1>
             <p class="subtitle">Strike a pose and become a living work of art!</p>
+
+            <!-- Hero: Live skeleton preview in a museum frame -->
+            <div class="title-preview-frame" id="title-preview-frame">
+                <canvas id="title-canvas"></canvas>
+                <div class="frame-invite" id="frame-invite">✨ Step in front of the camera! ✨</div>
+            </div>
 
             <!-- Setup status area -->
             <div class="setup-status" id="setup-status">
@@ -37,12 +37,6 @@
 
             <!-- Player indicator bubbles -->
             <div class="player-bubbles" id="player-bubbles"></div>
-
-            <!-- Pose preview while loading -->
-            <div class="pose-preview" id="pose-preview">
-                <div class="pose-preview-character" id="pose-preview-character"></div>
-                <p class="pose-preview-label" id="pose-preview-label">⭐ Practice your poses!</p>
-            </div>
 
             <!-- Setup tips -->
             <div class="setup-tips hidden" id="setup-tips">
@@ -55,9 +49,6 @@
                 <span class="privacy-text">All camera images and photos stay on YOUR device. Nothing is uploaded or shared online.</span>
             </div>
 
-            <div id="auto-countdown" class="auto-countdown hidden">
-                <div class="auto-countdown-text" id="auto-countdown-text">Starting in 5…</div>
-            </div>
             <button id="btn-play" class="btn-big btn-play btn-disabled" onclick="startGame()" disabled>
                 ⏳ Getting Ready…
             </button>
