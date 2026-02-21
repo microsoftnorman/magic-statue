@@ -1,12 +1,12 @@
-/* ==============================================
+﻿/* ==============================================
    MAGIC STATUE – Game Engine
    A webcam pose-matching party game for kids 3-5
    ============================================== */
 
 // ─── CONFIGURATION ────────────────────────────
 const CFG = {
-    confidence:       0.25,   // keypoint confidence threshold
-    matchThreshold:   0.50,   // % match to begin hold (forgiving for kids)
+    confidence:       0.20,   // keypoint confidence threshold (low = forgiving for kids)
+    matchThreshold:   0.40,   // % match to begin hold (very forgiving for kids)
     holdMs:           2000,   // ms to hold a freeze pose
     activeHoldMs:     3500,   // cumulative ms needed for active poses
     holdDecayRate:    0.5,    // freeze hold decays at half fill speed
@@ -158,6 +158,16 @@ const POSES = [
     },
 ];
 
+// ─── DEBUG STATS ──────────────────────────────
+const DBG = {
+    show: true,
+    frames: 0,
+    fps: 0,
+    detections: 0,
+    dps: 0,           // detections per second
+    lastTick: performance.now(),
+};
+
 // ─── GAME STATE ───────────────────────────────
 const S = {
     phase: 'title',          // title|loading|countdown|preview|matching|holding|celebrate|victory|error
@@ -169,15 +179,13 @@ const S = {
     smoothScore: 0,
     holdStart: 0,
     holdProgress: 0,
-    confetti: [],
     audioCtx: null,
     animId: null,
     titleAnimId: null,
     video: null,
     canvas: null,
     ctx: null,
-    cCanvas: null,
-    cCtx: null,
+
     titleCanvas: null,
     titleCtx: null,
     ready: false,            // true when camera+model loaded and player found
@@ -205,15 +213,31 @@ const S = {
     noPlayerFrames: 0,
 };
 
+// ─── CACHED DOM REFS (populated after DOMContentLoaded) ─
+const DOM = {};
+function cacheDOMRefs() {
+    const ids = ['meter-fill','meter-label','hold-overlay','hold-ring-fg','hold-text',
+        'statue-flash','camera-area','timer-fill','timer-text','encouragement',
+        'pose-emoji-bar','pose-name-bar','pose-instruction','pose-illustration',
+        'narrator-bar','narrator-text','combo-overlay'];
+    for (const id of ids) DOM[id] = document.getElementById(id);
+}
+
 // ─── DOM HELPERS ──────────────────────────────
 const $ = id => document.getElementById(id);
 
 // ─── ENTRY POINT ──────────────────────────────
 // Auto-init: start camera+model setup on page load
 window.addEventListener('DOMContentLoaded', () => {
+    cacheDOMRefs();
     initAudio();
     initNarrator();
     beginSetup();
+
+    // Press D to toggle debug stats overlay
+    window.addEventListener('keydown', e => {
+        if (e.key === 'd' || e.key === 'D') DBG.show = !DBG.show;
+    });
 });
 
 async function beginSetup() {
@@ -222,7 +246,7 @@ async function beginSetup() {
         await initCamera();
         S.cameraReady = true;
         markSetupDone('setup-camera', '📷 Camera ready!');
-        narrate('Camera is ready! I can see you!');
+        narrate('camera_ready', 'Camera is ready! I can see you!');
     } catch (e) {
         console.error(e);
         markSetupDone('setup-camera', '📷 Camera not available ✘');
@@ -232,6 +256,7 @@ async function beginSetup() {
 
     // Start title preview loop
     startTitlePreview();
+    startPosePreviewCycle();
     show($('setup-tips'));
 
     // 2) Model
@@ -246,7 +271,7 @@ async function beginSetup() {
         return;
     }
 
-    narrate('Step in front of the camera so I can see you!');
+    narrate('step_in', 'Step in front of the camera so I can see you!');
 }
 
 function pickPoses() {
@@ -271,8 +296,16 @@ async function startGame() {
     hide($('auto-countdown'));
     cancelTitlePreview();
 
-    narrate('Here we go! Get ready to play Magic Statue!');
-    await wait(1800);
+    // Unlock audio within the synchronous user-gesture context
+    _unlockBgAudio();
+
+    // Kid-friendly game explanation — wait for each sentence to finish
+    narrate('welcome', "Hi there! Welcome to the Museum of Fun Art! I'll show you a silly pose, and you copy it with your body!");
+    await waitForSpeech();
+    await wait(400);
+    narrate('rules', "When you match the pose, freeze like a statue and hold really still! Ready? Let's go!");
+    await waitForSpeech();
+    await wait(400);
 
     S.poseOrder = pickPoses();
     S.poseIdx = 0;
@@ -295,6 +328,17 @@ function restartGame() {
     }
     S.mediaRecorder = null;
     S.recordedChunks = [];
+
+    // Clear replay slideshow timer if still running
+    if (S.replayTimerId) { clearTimeout(S.replayTimerId); S.replayTimerId = null; }
+
+    // Revoke blob URLs from previous game screenshots to free memory
+    revokeScreenshotUrls();
+
+    // Clear gallery DOM so old images/videos don't linger
+    const gallery = $('photo-gallery');
+    if (gallery) gallery.innerHTML = '';
+
     S.poseOrder = pickPoses();
     S.poseIdx = 0;
     S.smoothScore = 0;
@@ -304,7 +348,7 @@ function restartGame() {
     S.bestStreak = 0;
     S.holdAccum = 0;
     S.lastFrameTime = 0;
-    narrate('Let\'s play again! Get ready!');
+    narrate('play_again', "Let's play again! Get ready!");
     showScreen('screen-game');
     buildProgressDots();
     buildScoreboard();
@@ -338,7 +382,7 @@ function startAutoCountdown() {
     const textEl = $('auto-countdown-text');
     if (!el || !textEl) { startGame(); return; }
     show(el);
-    narrate('I can see you! Anyone else want to play? Jump in front of the camera!');
+    narrate('anyone_else', 'I can see you! Anyone else want to play? Jump in front of the camera!');
     let sec = 5;
     textEl.textContent = 'Starting in ' + sec + '…';
     S.autoCountdownId = setInterval(() => {
@@ -346,9 +390,12 @@ function startAutoCountdown() {
         if (sec > 0) {
             textEl.textContent = 'Starting in ' + sec + '…';
             if (sec === 3) {
-                narrate(S.playersFound > 1
-                    ? S.playersFound + ' players ready! Here we go!'
-                    : 'Last chance to join!');
+                if (S.playersFound > 1) {
+                    const pKey = 'players_' + Math.min(S.playersFound, 4);
+                    narrate(pKey, S.playersFound + ' players ready! Here we go!');
+                } else {
+                    narrate('last_chance', 'Last chance to join!');
+                }
             }
         } else {
             clearInterval(S.autoCountdownId);
@@ -385,17 +432,6 @@ async function initCamera() {
     S.video  = video;
     S.canvas = canvas;
     S.ctx    = canvas.getContext('2d');
-
-    // confetti canvas
-    S.cCanvas = $('confetti-canvas');
-    S.cCanvas.width  = window.innerWidth;
-    S.cCanvas.height = window.innerHeight;
-    S.cCtx = S.cCanvas.getContext('2d');
-
-    window.addEventListener('resize', () => {
-        S.cCanvas.width  = window.innerWidth;
-        S.cCanvas.height = window.innerHeight;
-    });
 }
 
 // ─── TITLE PREVIEW LOOP ──────────────────────
@@ -410,6 +446,31 @@ function startTitlePreview() {
 }
 function cancelTitlePreview() {
     if (S.titleAnimId) { cancelAnimationFrame(S.titleAnimId); S.titleAnimId = null; }
+    stopPosePreviewCycle();
+}
+
+// ─── POSE PREVIEW CYCLE (title screen) ───────
+let posePreviewTimer = null;
+function startPosePreviewCycle() {
+    const charEl = $('pose-preview-character');
+    const labelEl = $('pose-preview-label');
+    if (!charEl || !labelEl) return;
+    const solo = POSES.filter(p => !p.multiPlayer);
+    let idx = 0;
+    function showNext() {
+        const pose = solo[idx % solo.length];
+        charEl.innerHTML = getPoseSVG(pose.id);
+        charEl.style.animation = 'none';
+        void charEl.offsetWidth;
+        charEl.style.animation = '';
+        labelEl.textContent = pose.emoji + ' ' + pose.name;
+        idx++;
+    }
+    showNext();
+    posePreviewTimer = setInterval(showNext, 2500);
+}
+function stopPosePreviewCycle() {
+    if (posePreviewTimer) { clearInterval(posePreviewTimer); posePreviewTimer = null; }
 }
 
 async function titleDetect() {
@@ -435,27 +496,16 @@ async function titleDetect() {
 }
 
 function drawTitlePreview() {
-    const {titleCtx: ctx, titleCanvas: canvas, video} = S;
+    const ctx = S.titleCtx, canvas = S.titleCanvas, video = S.video;
     if (!ctx || !video || video.readyState < 2) return;
 
-    ctx.save();
-    ctx.scale(-1, 1);
-    ctx.translate(-canvas.width, 0);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    ctx.restore();
 
-    // Draw skeletons on title too
     const poses = S.detected;
     const count = Math.min(poses.length, 4);
-    const origCtx = S.ctx;
-    const origCanvas = S.canvas;
-    S.ctx = ctx;
-    S.canvas = canvas;
     for (let i = 0; i < count; i++) {
-        drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length]);
+        drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length], ctx);
     }
-    S.ctx = origCtx;
-    S.canvas = origCanvas;
 }
 
 function updatePlayerBubbles(count) {
@@ -490,7 +540,7 @@ async function initDetector() {
 async function detect() {
     if (S.detecting || !S.detector || !S.video || S.video.readyState < 2) return;
     S.detecting = true;
-    try { S.detected = await S.detector.estimatePoses(S.video); }
+    try { S.detected = await S.detector.estimatePoses(S.video); DBG.detections++; }
     catch(_){}
     S.detecting = false;
 }
@@ -502,7 +552,7 @@ async function runCountdown() {
     const numEl  = $('countdown-num');
     show(overlay);
 
-    narrate('3, 2, 1, Go!');
+    narrate('countdown', '3, 2, 1, Go!');
     for (let n = CFG.countdownSec; n >= 1; n--) {
         numEl.textContent = n;
         numEl.style.animation = 'none';
@@ -536,9 +586,10 @@ async function startPoseIntro() {
     show(intro);
 
     // Narrator announces the pose
-    narrate('Next pose: ' + pose.name + ' ' + pose.instruction);
+    narrate('pose_' + pose.id, 'Next pose: ' + pose.name + ' ' + pose.instruction);
     playTone(523, .12);
     await wait(CFG.previewMs);
+    await waitForSpeech();
     hide(intro);
 
     beginMatching();
@@ -552,16 +603,18 @@ function beginMatching() {
     S.holdAccum = 0;
     S.lastFrameTime = performance.now();
     S.poseStartTime = performance.now();
-    hide($('hold-overlay'));
-    hide($('statue-flash'));
+    _lastGlowClass = '';
+    hide(DOM['hold-overlay']||$('hold-overlay'));
+    hide(DOM['statue-flash']||$('statue-flash'));
     const pose = currentPose();
     if (pose.active) {
-        narrate(pose.multiPlayer ? 'Do this one together! Keep moving!' : 'Keep moving! You can do it!');
+        narrate(pose.multiPlayer ? 'together_moving' : 'keep_moving',
+               pose.multiPlayer ? 'Do this one together! Keep moving!' : 'Keep moving! You can do it!');
         startVideoRecording();
     } else if (pose.multiPlayer) {
-        narrate('Do this one together! Work as a team!');
+        narrate('together_team', 'Do this one together! Work as a team!');
     } else {
-        narrate('Now copy the pose! You can do it!');
+        narrate('copy_pose', 'Now copy the pose! You can do it!');
     }
     startPoseTimer();
     startLoop();
@@ -591,32 +644,36 @@ async function poseCompleted() {
     awardPoints();
 
     // flash
-    const flash = $('statue-flash');
+    const flash = DOM['statue-flash']||$('statue-flash');
     flash.style.animation = 'none'; void flash.offsetWidth; flash.style.animation = '';
     show(flash);
 
     // Silly sound effect on success
     playSillySound();
-    spawnConfetti(120);
 
     // Streak combo announcement
-    let cheers;
+    let cheerClip, cheerText;
+    const sn = Math.min(S.streak, 8);
     if (S.streak >= 5) {
-        cheers = ['UNSTOPPABLE! ' + S.streak + ' in a row!', 'MEGA COMBO! ' + S.streak + ' poses! WOW!'];
-        spawnConfetti(200);
+        const ab = Math.random() < 0.5 ? 'a' : 'b';
+        cheerClip = 'streak_' + sn + ab;
+        cheerText = ab === 'a' ? 'UNSTOPPABLE! ' + S.streak + ' in a row!' : 'MEGA COMBO! ' + S.streak + ' poses! WOW!';
     } else if (S.streak >= 3) {
-        cheers = [S.streak + ' in a row! COMBO! Amazing!', 'Streak of ' + S.streak + '! You\'re on fire!'];
-        spawnConfetti(80);
+        const ab = Math.random() < 0.5 ? 'a' : 'b';
+        cheerClip = 'streak_' + sn + ab;
+        cheerText = ab === 'a' ? S.streak + ' in a row! COMBO! Amazing!' : 'Streak of ' + S.streak + "! You're on fire!";
     } else {
-        cheers = [
-            'Amazing! You did it!',
-            'Wow, great job! You are a star!',
-            'Fantastic! That was perfect!',
-            'Hooray! You nailed it!',
-            'Superstar! That was awesome!',
+        const cheers = [
+            ['cheer_1', 'Amazing! You did it!'],
+            ['cheer_2', 'Wow, great job! You are a star!'],
+            ['cheer_3', 'Fantastic! That was perfect!'],
+            ['cheer_4', 'Hooray! You nailed it!'],
+            ['cheer_5', 'Superstar! That was awesome!'],
         ];
+        const pick = cheers[Math.floor(Math.random()*cheers.length)];
+        cheerClip = pick[0]; cheerText = pick[1];
     }
-    narrate(cheers[Math.floor(Math.random()*cheers.length)]);
+    narrate(cheerClip, cheerText);
 
     // Show combo overlay if streak >= 2
     showCombo();
@@ -624,6 +681,7 @@ async function poseCompleted() {
     markDotDone(S.poseIdx);
     updateScoreboard();
     await wait(CFG.celebrateMs);
+    await waitForSpeech();
     hide(flash);
     hideCombo();
 
@@ -645,9 +703,10 @@ async function poseTimedOut() {
 
     S.streak = 0; // reset streak on timeout
     playFailSound();
-    narrate('Time\'s up! Let\'s try the next one!');
+    narrate('times_up', "Time's up! Let's try the next one!");
     markDotDone(S.poseIdx);
     await wait(2000);
+    await waitForSpeech();
 
     S.poseIdx++;
     if (S.poseIdx >= S.poseOrder.length) {
@@ -657,35 +716,41 @@ async function poseTimedOut() {
     }
 }
 
-// ─── POSE TIMER ───────────────────────────────
+// ─── POSE TIMER (updated from main loop, no separate rAF) ──
+let _lastTimerSecs = -1;
+let _lastTimerClass = '';
+
 function startPoseTimer() {
-    clearPoseTimer();
     S.poseStartTime = performance.now();
-    const tick = () => {
-        if (S.phase !== 'matching' && S.phase !== 'holding') return;
-        const elapsed = performance.now() - S.poseStartTime;
-        const remaining = Math.max(0, CFG.poseTimeLimit - elapsed);
+    _lastTimerSecs = -1;
+    _lastTimerClass = '';
+}
+function clearPoseTimer() {
+    _lastTimerSecs = -1;
+    _lastTimerClass = '';
+}
+function updatePoseTimer() {
+    const elapsed = performance.now() - S.poseStartTime;
+    const remaining = Math.max(0, CFG.poseTimeLimit - elapsed);
+    const secs = Math.ceil(remaining / 1000);
+    // Only touch DOM when the displayed second changes
+    if (secs !== _lastTimerSecs) {
+        _lastTimerSecs = secs;
         const pct = (remaining / CFG.poseTimeLimit) * 100;
-        const secs = Math.ceil(remaining / 1000);
         const fill = $('timer-fill');
         const text = $('timer-text');
         if (fill) fill.style.width = pct + '%';
         if (text) text.textContent = secs;
-        if (fill) {
+        const cls = secs <= 5 ? 'timer-danger' : secs <= 10 ? 'timer-warn' : '';
+        if (cls !== _lastTimerClass && fill) {
             fill.classList.remove('timer-warn','timer-danger');
-            if (secs <= 5) fill.classList.add('timer-danger');
-            else if (secs <= 10) fill.classList.add('timer-warn');
+            if (cls) fill.classList.add(cls);
+            _lastTimerClass = cls;
         }
-        if (remaining <= 0) {
-            poseTimedOut();
-            return;
-        }
-        S.poseTimerId = requestAnimationFrame(tick);
-    };
-    tick();
-}
-function clearPoseTimer() {
-    if (S.poseTimerId) { cancelAnimationFrame(S.poseTimerId); S.poseTimerId = null; }
+    }
+    if (remaining <= 0) {
+        poseTimedOut();
+    }
 }
 
 // ─── SCORING ──────────────────────────────────
@@ -757,11 +822,11 @@ function showVictory() {
     S.phase = 'victory';
     cancelLoop();
     stopBgMusic();
-    spawnConfetti(200);
     showScreen('screen-victory');
     playChord(); setTimeout(()=>playChord(),400);
     const streakMsg = S.bestStreak >= 3 ? ' Best streak: ' + S.bestStreak + ' in a row!' : '';
-    narrate('You did ALL the poses! You are a Magic Statue Champion!' + streakMsg);
+    const vClip = S.bestStreak >= 3 ? 'victory_streak' + Math.min(S.bestStreak, 8) : 'victory';
+    narrate(vClip, 'You did ALL the poses! You are a Fun Art Superstar!' + streakMsg);
     buildFinalScores();
     // Start replay slideshow, then show gallery after
     startReplaySlideshow(() => {
@@ -770,69 +835,240 @@ function showVictory() {
 }
 
 // ─── MAIN GAME LOOP ──────────────────────────
+let _detectTimer = null;
+
 function startLoop() {
     cancelLoop();
+    // Detection runs on its own interval, decoupled from rendering
+    startDetectLoop();
     function tick() {
         S.animId = requestAnimationFrame(tick);
-        detect();           // fire-and-forget async
         drawFrame();
-        updateConfetti();
-        if (S.phase === 'matching' || S.phase === 'holding') updateLogic();
+        const phase = S.phase;
+        if (phase === 'matching' || phase === 'holding') {
+            updateLogic();
+            updatePoseTimer();
+        }
     }
     tick();
 }
-function cancelLoop() { if (S.animId) { cancelAnimationFrame(S.animId); S.animId = null; } }
+function cancelLoop() {
+    if (S.animId) { cancelAnimationFrame(S.animId); S.animId = null; }
+    stopDetectLoop();
+}
+
+function startDetectLoop() {
+    stopDetectLoop();
+    async function run() {
+        await detect();
+        _detectTimer = setTimeout(run, 0);
+    }
+    run();
+}
+function stopDetectLoop() {
+    if (_detectTimer) { clearTimeout(_detectTimer); _detectTimer = null; }
+}
 
 // ─── DRAW ─────────────────────────────────────
+// Throttle counters for DOM updates that don't need 60fps
+let _lastMeterUpdate = 0;
+let _lastEncUpdate = 0;
+let _lastMeterClass = '';
+
 function drawFrame() {
-    const {ctx, canvas, video} = S;
-    if (!ctx || !video) return;
+    const ctx = S.ctx, canvas = S.canvas, video = S.video;
+    if (!ctx || !video || video.readyState < 2) return;
 
-    // draw mirrored video
-    ctx.save();
-    ctx.scale(-1, 1);
-    ctx.translate(-canvas.width, 0);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    ctx.restore();
 
-    // skeletons
     const poses = S.detected;
     const count = Math.min(poses.length, 4);
     for (let i = 0; i < count; i++) {
-        drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length]);
+        drawSkeleton(poses[i].keypoints, PLAYER_COLORS[i % PLAYER_COLORS.length], ctx);
     }
 
-    updateEncouragement(count);
+    // Throttle encouragement DOM updates to ~8fps
+    const now = performance.now();
+    if (now - _lastEncUpdate > 120) {
+        _lastEncUpdate = now;
+        updateEncouragement(count);
+    }
+
+    // Debug stats
+    DBG.frames++;
+    if (now - DBG.lastTick >= 1000) {
+        DBG.fps = DBG.frames;
+        DBG.dps = DBG.detections;
+        DBG.frames = 0;
+        DBG.detections = 0;
+        DBG.lastTick = now;
+    }
+    if (DBG.show) drawDebugOverlay(ctx, canvas, count);
 }
 
-function drawSkeleton(kp, color) {
-    const {ctx, canvas} = S;
-    const mx = x => canvas.width - x;          // mirror x
+// ─── DEBUG OVERLAY ────────────────────────────
+function drawDebugOverlay(ctx, canvas, playerCount) {
+    const x = 8, y = 14, lh = 18;
+    const lines = [
+        'FPS: ' + DBG.fps,
+        'Detect/s: ' + DBG.dps,
+        'Players: ' + playerCount,
+        'Phase: ' + S.phase,
+        'Score: ' + (S.smoothScore * 100 | 0) + '%',
+        'Hold: ' + (S.holdProgress * 100 | 0) + '%',
+        'Streak: ' + S.streak,
+        'Cam: ' + (S.video ? S.video.videoWidth + 'x' + S.video.videoHeight : '?'),
+        'Backend: ' + (typeof tf !== 'undefined' ? tf.getBackend() : '?'),
+    ];
+    const boxW = 180, boxH = lines.length * lh + 10;
+    ctx.save();
+    // Mirror back so text reads correctly (canvas is CSS scaleX(-1))
+    ctx.scale(-1, 1);
+    ctx.translate(-canvas.width, 0);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(x - 4, y - 12, boxW, boxH);
+    ctx.font = '13px monospace';
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < lines.length; i++) {
+        ctx.fillStyle = i === 0 ? (DBG.fps >= 28 ? '#6BCB77' : DBG.fps >= 20 ? '#f1c40f' : '#e74c3c') : '#fff';
+        ctx.fillText(lines[i], x, y + i * lh - 6);
+    }
+    ctx.restore();
+}
 
-    // bones
-    ctx.lineWidth = 5;
+// Pre-allocated skip set for drawSkeleton (avoid creating per frame)
+const _JOINT_SKIP = new Set([0,1,2,3,4,9,10,15,16]);
+const _TWO_PI = Math.PI * 2;
+let _lastGlowClass = '';
+
+function drawSkeleton(kp, color, ctx) {
+    const conf = CFG.confidence;
+
+    // ── Pass 1: Colored bones (single path, no shadow) ──
+    ctx.lineWidth = 7;
     ctx.strokeStyle = color;
     ctx.lineCap = 'round';
-    for (const [a, b] of BONES) {
-        if (kp[a].score > CFG.confidence && kp[b].score > CFG.confidence) {
-            ctx.beginPath();
-            ctx.moveTo(mx(kp[a].x), kp[a].y);
-            ctx.lineTo(mx(kp[b].x), kp[b].y);
-            ctx.stroke();
+    ctx.beginPath();
+    for (let i = 0; i < BONES.length; i++) {
+        const a = BONES[i][0], b = BONES[i][1];
+        if (kp[a].score > conf && kp[b].score > conf) {
+            ctx.moveTo(kp[a].x, kp[a].y);
+            ctx.lineTo(kp[b].x, kp[b].y);
         }
     }
+    ctx.stroke();
 
-    // joints
-    for (const p of kp) {
-        if (p.score > CFG.confidence) {
-            ctx.beginPath();
-            ctx.arc(mx(p.x), p.y, 6, 0, Math.PI * 2);
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = '#fff';
-            ctx.stroke();
+    // ── Pass 2: Thin white highlight on bones (same path shape) ──
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    for (let i = 0; i < BONES.length; i++) {
+        const a = BONES[i][0], b = BONES[i][1];
+        if (kp[a].score > conf && kp[b].score > conf) {
+            ctx.moveTo(kp[a].x, kp[a].y);
+            ctx.lineTo(kp[b].x, kp[b].y);
         }
+    }
+    ctx.stroke();
+
+    // ── Pass 3: Joint dots (batched into one path) ──
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < kp.length; i++) {
+        if (_JOINT_SKIP.has(i)) continue;
+        const p = kp[i];
+        if (p.score > conf) {
+            ctx.moveTo(p.x + 8, p.y);
+            ctx.arc(p.x, p.y, 8, 0, _TWO_PI);
+        }
+    }
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+
+    // ── Pass 4: Cartoon face (batched sub-paths) ──
+    const nose = kp[0];
+    if (nose.score > conf) {
+        const hx = nose.x, hy = nose.y - 5;
+        // Head circle (semi-transparent fill + colored stroke)
+        ctx.beginPath();
+        ctx.arc(hx, hy, 24, 0, _TWO_PI);
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        // White eye sclera (batched)
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(hx - 3.5, hy - 3);
+        ctx.arc(hx - 8, hy - 3, 4.5, 0, _TWO_PI);
+        ctx.moveTo(hx + 12.5, hy - 3);
+        ctx.arc(hx + 8, hy - 3, 4.5, 0, _TWO_PI);
+        ctx.fill();
+        // Dark pupils (batched)
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.moveTo(hx - 4.5, hy - 2);
+        ctx.arc(hx - 7, hy - 2, 2.5, 0, _TWO_PI);
+        ctx.moveTo(hx + 11.5, hy - 2);
+        ctx.arc(hx + 9, hy - 2, 2.5, 0, _TWO_PI);
+        ctx.fill();
+        // Eye shine (batched)
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(hx - 7, hy - 4);
+        ctx.arc(hx - 8, hy - 4, 1, 0, _TWO_PI);
+        ctx.moveTo(hx + 9, hy - 4);
+        ctx.arc(hx + 8, hy - 4, 1, 0, _TWO_PI);
+        ctx.fill();
+        // Smile
+        ctx.beginPath();
+        ctx.arc(hx, hy + 3, 9, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // ── Pass 5: Hands (batched) ──
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    let drewHands = false;
+    for (let i = 9; i <= 10; i++) {
+        const p = kp[i];
+        if (p.score > conf) {
+            ctx.moveTo(p.x + 11, p.y);
+            ctx.arc(p.x, p.y, 11, 0, _TWO_PI);
+            drewHands = true;
+        }
+    }
+    if (drewHands) {
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // ── Pass 6: Feet (batched) ──
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    let drewFeet = false;
+    for (let i = 15; i <= 16; i++) {
+        const p = kp[i];
+        if (p.score > conf) {
+            ctx.moveTo(p.x + 16, p.y);
+            ctx.ellipse(p.x, p.y, 16, 9, 0, 0, _TWO_PI);
+            drewFeet = true;
+        }
+    }
+    if (drewFeet) {
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
 }
 
@@ -855,12 +1091,12 @@ function updateLogic() {
                 // Freeze: gradual decay instead of instant reset
                 S.holdAccum = Math.max(0, S.holdAccum - dt * CFG.holdDecayRate);
                 S.holdProgress = S.holdAccum / CFG.holdMs;
-                $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
+                (DOM['hold-ring-fg']||$('hold-ring-fg')).style.strokeDashoffset = 327 * (1 - S.holdProgress);
                 if (S.holdAccum <= 0) {
                     S.phase = 'matching';
                     S.holdProgress = 0;
-                    hide($('hold-overlay'));
-                    $('hold-ring-fg').style.strokeDashoffset = 327;
+                    hide(DOM['hold-overlay']||$('hold-overlay'));
+                    (DOM['hold-ring-fg']||$('hold-ring-fg')).style.strokeDashoffset = 327;
                 }
             }
         }
@@ -883,12 +1119,17 @@ function updateLogic() {
     S.smoothScore = lerp(S.smoothScore, avg, 0.25);
     updateMeter(S.smoothScore);
 
-    // camera glow
-    const cam = $('camera-area');
-    cam.classList.remove('glow-red','glow-yellow','glow-green');
-    if (S.smoothScore > CFG.matchThreshold) cam.classList.add('glow-green');
-    else if (S.smoothScore > 0.4) cam.classList.add('glow-yellow');
-    else if (S.smoothScore > 0.2) cam.classList.add('glow-red');
+    // camera glow — only touch DOM when class actually changes
+    const cam = DOM['camera-area'] || $('camera-area');
+    let newGlow = '';
+    if (S.smoothScore > CFG.matchThreshold) newGlow = 'glow-green';
+    else if (S.smoothScore > 0.4) newGlow = 'glow-yellow';
+    else if (S.smoothScore > 0.2) newGlow = 'glow-red';
+    if (newGlow !== _lastGlowClass) {
+        cam.classList.remove('glow-red','glow-yellow','glow-green');
+        if (newGlow) cam.classList.add(newGlow);
+        _lastGlowClass = newGlow;
+    }
 
     const isActive = pose.active;
     const holdTarget = isActive ? CFG.activeHoldMs : CFG.holdMs;
@@ -896,15 +1137,16 @@ function updateLogic() {
     if (S.smoothScore >= CFG.matchThreshold) {
         if (S.phase === 'matching') {
             S.phase = 'holding';
-            show($('hold-overlay'));
+            show(DOM['hold-overlay']||$('hold-overlay'));
             playTone(440, .1);
-            narrate(isActive ? 'Great! Keep going!' : 'Hold it! Freeze like a statue!');
+            narrate(isActive ? 'keep_going' : 'freeze',
+                   isActive ? 'Great! Keep going!' : 'Hold it! Freeze like a statue!');
         }
         if (S.phase === 'holding') {
             S.holdAccum = Math.min(S.holdAccum + dt, holdTarget);
             S.holdProgress = S.holdAccum / holdTarget;
-            $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
-            $('hold-text').textContent = S.holdProgress < 1 ? (isActive ? 'KEEP GOING!' : 'HOLD IT!') : 'YES!';
+            (DOM['hold-ring-fg']||$('hold-ring-fg')).style.strokeDashoffset = 327 * (1 - S.holdProgress);
+            (DOM['hold-text']||$('hold-text')).textContent = S.holdProgress < 1 ? (isActive ? 'KEEP GOING!' : 'HOLD IT!') : 'YES!';
             if (S.holdProgress >= 1) poseCompleted();
         }
     } else {
@@ -915,12 +1157,12 @@ function updateLogic() {
                 // Freeze: gradual decay instead of instant reset
                 S.holdAccum = Math.max(0, S.holdAccum - dt * CFG.holdDecayRate);
                 S.holdProgress = S.holdAccum / holdTarget;
-                $('hold-ring-fg').style.strokeDashoffset = 327 * (1 - S.holdProgress);
+                (DOM['hold-ring-fg']||$('hold-ring-fg')).style.strokeDashoffset = 327 * (1 - S.holdProgress);
                 if (S.holdAccum <= 0) {
                     S.phase = 'matching';
                     S.holdProgress = 0;
-                    hide($('hold-overlay'));
-                    $('hold-ring-fg').style.strokeDashoffset = 327;
+                    hide(DOM['hold-overlay']||$('hold-overlay'));
+                    (DOM['hold-ring-fg']||$('hold-ring-fg')).style.strokeDashoffset = 327;
                 }
             }
         }
@@ -1310,199 +1552,135 @@ function checkDisco(kp){
     return n?s/n:0;
 }
 
-// --- Multiplayer pose checks ---
-
+// Simplified multiplayer — just check closest wrists
 function checkHighFive(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
         for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkHighFivePair(allPoses[i].keypoints,allPoses[j].keypoints));
+            best=Math.max(best,checkWristClose(allPoses[i].keypoints,allPoses[j].keypoints,true));
     return best;
 }
-function checkHighFivePair(kp1,kp2){
-    let s=0, n=0;
-    const w1=[kp1[9],kp1[10]].filter(kpOk);
-    const w2=[kp2[9],kp2[10]].filter(kpOk);
-    if(!w1.length||!w2.length) return 0;
-    let minD=Infinity,bw1,bw2;
-    for(const a of w1) for(const b of w2){
-        const d=Math.hypot(a.x-b.x,a.y-b.y);
-        if(d<minD){minD=d;bw1=a;bw2=b;}
-    }
-    const body=(kpOk(kp1[5])&&kpOk(kp1[6]))?Math.abs(kp1[5].x-kp1[6].x):100;
-    n++;if(minD<body*2.5)s++;
-    const s1=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:300;
-    const s2=(kpOk(kp2[5])&&kpOk(kp2[6]))?(kp2[5].y+kp2[6].y)/2:300;
-    n++;if(bw1.y<s1)s++;
-    n++;if(bw2.y<s2)s++;
-    return n?s/n:0;
-}
-
 function checkHoldHands(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
         for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkHoldHandsPair(allPoses[i].keypoints,allPoses[j].keypoints));
+            best=Math.max(best,checkWristClose(allPoses[i].keypoints,allPoses[j].keypoints,false));
     return best;
 }
-function checkHoldHandsPair(kp1,kp2){
+function checkWristClose(kp1,kp2,aboveShoulder){
     let s=0, n=0;
     const w1=[kp1[9],kp1[10]].filter(kpOk);
     const w2=[kp2[9],kp2[10]].filter(kpOk);
     if(!w1.length||!w2.length) return 0;
-    let minD=Infinity,bw1,bw2;
+    let minD=Infinity;
     for(const a of w1) for(const b of w2){
         const d=Math.hypot(a.x-b.x,a.y-b.y);
-        if(d<minD){minD=d;bw1=a;bw2=b;}
+        if(d<minD) minD=d;
     }
-    const body=(kpOk(kp1[5])&&kpOk(kp1[6]))?Math.abs(kp1[5].x-kp1[6].x):100;
-    n++;if(minD<body*2.5)s++;
-    n++;if(Math.abs(bw1.y-bw2.y)<body*1.5)s++;
-    const s1=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:200;
-    n++;if(bw1.y>s1-20)s++;
+    n++;if(minD<150)s++;
+    if(aboveShoulder){
+        const sh=(kpOk(kp1[5])&&kpOk(kp1[6]))?(kp1[5].y+kp1[6].y)/2:300;
+        n++;if(w1.some(w=>w.y<sh))s++;
+    }
     return n?s/n:0;
 }
-
-// --- Additional multiplayer pose checks ---
 
 function checkMirrorPose(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
-        for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkMirrorPair(allPoses[i].keypoints,allPoses[j].keypoints));
+        for(let j=i+1;j<allPoses.length;j++){
+            const k1=allPoses[i].keypoints,k2=allPoses[j].keypoints;
+            let s=0,n=0;
+            // Both have arms out
+            const lw1=k1[9],rw1=k1[10],ls1=k1[5],rs1=k1[6];
+            if(kpOk(lw1)&&kpOk(rw1)&&kpOk(ls1)&&kpOk(rs1)){
+                n++;if(Math.abs(lw1.x-rw1.x)>Math.abs(ls1.x-rs1.x)*1.2)s++;
+            }
+            const lw2=k2[9],rw2=k2[10],ls2=k2[5],rs2=k2[6];
+            if(kpOk(lw2)&&kpOk(rw2)&&kpOk(ls2)&&kpOk(rs2)){
+                n++;if(Math.abs(lw2.x-rw2.x)>Math.abs(ls2.x-rs2.x)*1.2)s++;
+            }
+            best=Math.max(best,n?s/n:0);
+        }
     return best;
-}
-function checkMirrorPair(kp1,kp2){
-    let s=0, n=0;
-    const lw1=kp1[9],rw1=kp1[10],ls1=kp1[5],rs1=kp1[6];
-    const lw2=kp2[9],rw2=kp2[10],ls2=kp2[5],rs2=kp2[6];
-    // Both have arms out wide
-    if(kpOk(lw1)&&kpOk(rw1)&&kpOk(ls1)&&kpOk(rs1)){
-        const sw=Math.abs(ls1.x-rs1.x);
-        n++;if(Math.abs(lw1.x-rw1.x)>sw*1.3)s++;
-    }
-    if(kpOk(lw2)&&kpOk(rw2)&&kpOk(ls2)&&kpOk(rs2)){
-        const sw=Math.abs(ls2.x-rs2.x);
-        n++;if(Math.abs(lw2.x-rw2.x)>sw*1.3)s++;
-    }
-    // Both wrists at roughly same height (mirroring)
-    if(kpOk(lw1)&&kpOk(rw1)&&kpOk(lw2)&&kpOk(rw2)){
-        const avgH1=(lw1.y+rw1.y)/2, avgH2=(lw2.y+rw2.y)/2;
-        const bodyH=kpOk(ls1)&&kpOk(kp1[11])?Math.abs(kp1[11].y-ls1.y):150;
-        n++;if(Math.abs(avgH1-avgH2)<bodyH*0.5)s++;
-    }
-    return n?s/n:0;
 }
 
 function checkBackToBack(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
-        for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkBackToBackPair(allPoses[i].keypoints,allPoses[j].keypoints));
+        for(let j=i+1;j<allPoses.length;j++){
+            const k1=allPoses[i].keypoints,k2=allPoses[j].keypoints;
+            let s=0,n=0;
+            const ls1=k1[5],rs1=k1[6],ls2=k2[5],rs2=k2[6];
+            if(kpOk(ls1)&&kpOk(rs1)&&kpOk(ls2)&&kpOk(rs2)){
+                const c1x=(ls1.x+rs1.x)/2,c2x=(ls2.x+rs2.x)/2;
+                n++;if(Math.abs(c1x-c2x)<200)s++;
+                n++;if(Math.abs((ls1.y+rs1.y)/2-(ls2.y+rs2.y)/2)<100)s++;
+            }
+            best=Math.max(best,n?s/n:0);
+        }
     return best;
-}
-function checkBackToBackPair(kp1,kp2){
-    let s=0, n=0;
-    const ls1=kp1[5],rs1=kp1[6],ls2=kp2[5],rs2=kp2[6];
-    const lh1=kp1[11],rh1=kp1[12],lh2=kp2[11],rh2=kp2[12];
-    // Shoulders close together (bodies near each other)
-    if(kpOk(ls1)&&kpOk(rs1)&&kpOk(ls2)&&kpOk(rs2)){
-        const c1x=(ls1.x+rs1.x)/2, c2x=(ls2.x+rs2.x)/2;
-        const c1y=(ls1.y+rs1.y)/2, c2y=(ls2.y+rs2.y)/2;
-        const bw=Math.abs(ls1.x-rs1.x);
-        n++;if(Math.abs(c1x-c2x)<bw*4)s++;
-        // Shoulders at similar height
-        n++;if(Math.abs(c1y-c2y)<bw*2)s++;
-    }
-    // Hips close
-    if(kpOk(lh1)&&kpOk(rh1)&&kpOk(lh2)&&kpOk(rh2)){
-        const hc1x=(lh1.x+rh1.x)/2, hc2x=(lh2.x+rh2.x)/2;
-        const bw=kpOk(ls1)&&kpOk(rs1)?Math.abs(ls1.x-rs1.x):80;
-        n++;if(Math.abs(hc1x-hc2x)<bw*4)s++;
-    }
-    return n?s/n:0;
 }
 
 function checkWaveTogether(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
-        for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkWaveTogetherPair(allPoses[i].keypoints,allPoses[j].keypoints));
+        for(let j=i+1;j<allPoses.length;j++){
+            const k1=allPoses[i].keypoints,k2=allPoses[j].keypoints;
+            let s=0,n=0;
+            const nose1=k1[0],nose2=k2[0];
+            if(kpOk(nose1)){const w=[k1[9],k1[10]].filter(kpOk);if(w.length){n++;if(w.some(p=>p.y<nose1.y))s++;}}
+            if(kpOk(nose2)){const w=[k2[9],k2[10]].filter(kpOk);if(w.length){n++;if(w.some(p=>p.y<nose2.y))s++;}}
+            best=Math.max(best,n?s/n:0);
+        }
     return best;
-}
-function checkWaveTogetherPair(kp1,kp2){
-    let s=0, n=0;
-    const nose1=kp1[0],nose2=kp2[0];
-    // Player 1: at least one wrist above nose
-    const w1=[kp1[9],kp1[10]].filter(kpOk);
-    if(w1.length&&kpOk(nose1)){
-        n++;if(w1.some(w=>w.y<nose1.y))s++;
-    }
-    // Player 2: at least one wrist above nose
-    const w2=[kp2[9],kp2[10]].filter(kpOk);
-    if(w2.length&&kpOk(nose2)){
-        n++;if(w2.some(w=>w.y<nose2.y))s++;
-    }
-    // Both have arms up at similar height
-    if(w1.length&&w2.length){
-        const minY1=Math.min(...w1.map(w=>w.y));
-        const minY2=Math.min(...w2.map(w=>w.y));
-        const bodyH=kpOk(kp1[5])&&kpOk(kp1[11])?Math.abs(kp1[11].y-kp1[5].y):150;
-        n++;if(Math.abs(minY1-minY2)<bodyH*0.6)s++;
-    }
-    return n?s/n:0;
 }
 
 function checkSideBySide(allPoses){
     let best=0;
     for(let i=0;i<allPoses.length;i++)
-        for(let j=i+1;j<allPoses.length;j++)
-            best=Math.max(best,checkSideBySidePair(allPoses[i].keypoints,allPoses[j].keypoints));
+        for(let j=i+1;j<allPoses.length;j++){
+            const k1=allPoses[i].keypoints,k2=allPoses[j].keypoints;
+            let s=0,n=0;
+            const nose1=k1[0],nose2=k2[0];
+            if(kpOk(nose1)){const w=[k1[9],k1[10]].filter(kpOk);if(w.length){n++;if(w.some(p=>p.y<nose1.y))s++;}}
+            if(kpOk(nose2)){const w=[k2[9],k2[10]].filter(kpOk);if(w.length){n++;if(w.some(p=>p.y<nose2.y))s++;}}
+            best=Math.max(best,n?s/n:0);
+        }
     return best;
-}
-function checkSideBySidePair(kp1,kp2){
-    let s=0, n=0;
-    const ls1=kp1[5],rs1=kp1[6],ls2=kp2[5],rs2=kp2[6];
-    const lw1=kp1[9],rw1=kp1[10],lw2=kp2[9],rw2=kp2[10];
-    // Standing next to each other (shoulder centers within range)
-    if(kpOk(ls1)&&kpOk(rs1)&&kpOk(ls2)&&kpOk(rs2)){
-        const c1x=(ls1.x+rs1.x)/2, c2x=(ls2.x+rs2.x)/2;
-        const bw=Math.abs(ls1.x-rs1.x);
-        n++;if(Math.abs(c1x-c2x)<bw*6)s++;
-    }
-    // At least one wrist above nose for each player
-    if(kpOk(kp1[0])){
-        const wrists=[lw1,rw1].filter(kpOk);
-        if(wrists.length){n++;if(wrists.some(w=>w.y<kp1[0].y))s++;}
-    }
-    if(kpOk(kp2[0])){
-        const wrists=[lw2,rw2].filter(kpOk);
-        if(wrists.length){n++;if(wrists.some(w=>w.y<kp2[0].y))s++;}
-    }
-    return n?s/n:0;
 }
 
 // ─── UI UPDATES ───────────────────────────────
 function currentPose(){ return POSES[S.poseOrder[S.poseIdx]]; }
 
 function setPoseUI(pose){
-    $('pose-emoji-bar').textContent  = pose.emoji;
-    $('pose-name-bar').textContent   = pose.name;
-    $('pose-instruction').textContent= pose.instruction;
-    $('pose-illustration').innerHTML = getPoseSVG(pose.id);
+    (DOM['pose-emoji-bar']||$('pose-emoji-bar')).textContent  = pose.emoji;
+    (DOM['pose-name-bar']||$('pose-name-bar')).textContent   = pose.name;
+    (DOM['pose-instruction']||$('pose-instruction')).textContent= pose.instruction;
+    (DOM['pose-illustration']||$('pose-illustration')).innerHTML = getPoseSVG(pose.id);
 }
 
 function updateMeter(v){
+    const now = performance.now();
+    // Throttle meter DOM writes to ~15fps
+    if (now - _lastMeterUpdate < 66) return;
+    _lastMeterUpdate = now;
+
     const pct = Math.round(v * 100);
-    const fill = $('meter-fill');
+    const fill = DOM['meter-fill'];
+    if (!fill) return;
     fill.style.width = pct + '%';
-    fill.className = 'meter-fill ' +
-        (pct >= 65 ? 'perfect' : pct >= 45 ? 'high' : pct >= 25 ? 'medium' : 'low');
-    $('meter-label').textContent = pct + '%';
+    const cls = pct >= 65 ? 'perfect' : pct >= 45 ? 'high' : pct >= 25 ? 'medium' : 'low';
+    if (cls !== _lastMeterClass) {
+        _lastMeterClass = cls;
+        fill.className = 'meter-fill ' + cls;
+    }
+    const label = DOM['meter-label'];
+    if (label) label.textContent = pct + '%';
 }
 
 function updateEncouragement(playerCount) {
-    const el = $('encouragement');
+    const el = DOM['encouragement'] || $('encouragement');
     if (!el) return;
     const now = performance.now();
     const phase = S.phase;
@@ -1517,7 +1695,7 @@ function updateEncouragement(playerCount) {
             // Narrate only once every 6 seconds
             if (now - S.lastEncourageTime > 6000) {
                 S.lastEncourageTime = now;
-                narrate('I can\'t see you! Come stand in front of the camera!');
+                narrate('cant_see', "I can't see you! Come stand in front of the camera!");
             }
         }
         return;
@@ -1592,44 +1770,6 @@ function setLoadMsg(msg, pct){
 function showError(msg){
     $('error-message').textContent = msg;
     showScreen('screen-error');
-}
-
-// ─── CONFETTI ─────────────────────────────────
-function spawnConfetti(count){
-    const W = S.cCanvas.width, H = S.cCanvas.height;
-    const colors = ['#FF6B9D','#FFD93D','#6BCB77','#4ECDC4','#FF8C42','#7B2FF7','#ff0000','#00aaff'];
-    for(let i=0;i<count;i++){
-        S.confetti.push({
-            x: Math.random()*W,
-            y: Math.random()*-H*0.5,
-            w: Math.random()*10+5,
-            h: Math.random()*6+3,
-            color: colors[Math.floor(Math.random()*colors.length)],
-            vx: (Math.random()-0.5)*4,
-            vy: Math.random()*4+2,
-            rot: Math.random()*360,
-            rv: (Math.random()-0.5)*12,
-            life: 1,
-        });
-    }
-}
-function updateConfetti(){
-    const {cCtx:ctx, cCanvas:c, confetti} = S;
-    if(!ctx) return;
-    ctx.clearRect(0,0,c.width,c.height);
-    for(let i=confetti.length-1;i>=0;i--){
-        const p=confetti[i];
-        p.x+=p.vx;  p.y+=p.vy;  p.vy+=0.12;
-        p.rot+=p.rv; p.life-=0.003;
-        if(p.y>c.height+20||p.life<=0){ confetti.splice(i,1); continue; }
-        ctx.save();
-        ctx.globalAlpha=Math.max(0,p.life);
-        ctx.translate(p.x,p.y);
-        ctx.rotate(p.rot*Math.PI/180);
-        ctx.fillStyle=p.color;
-        ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);
-        ctx.restore();
-    }
 }
 
 // ─── SOUND (Web Audio API tiny tones) ─────────
@@ -1752,7 +1892,7 @@ function playFailSound(){
 
 // ─── COMBO OVERLAY ────────────────────────────
 function showCombo(){
-    const el=$('combo-overlay');
+    const el=DOM['combo-overlay']||$('combo-overlay');
     if(!el || S.streak < 2) return;
     const mult = S.streak >= 3 ? ' (' + (1+(S.streak-2)*0.5).toFixed(1) + 'x)' : '';
     el.querySelector('.combo-count').textContent = S.streak + ' IN A ROW!' + mult;
@@ -1761,47 +1901,28 @@ function showCombo(){
     show(el);
 }
 function hideCombo(){
-    const el=$('combo-overlay');
+    const el=DOM['combo-overlay']||$('combo-overlay');
     if(el) hide(el);
 }
 
-// ─── NARRATOR (Web Speech Synthesis) ─────────
-let narratorVoice = null;
+// ─── NARRATOR (pre-recorded MP3 clips) ─────────
+let _narratorAudio = null;
 let narratorTimeout = null;
+const _NARRATOR_DIR = 'audio/narrator/';
 
 function initNarrator() {
-    if (!('speechSynthesis' in window)) return;
-    const loadVoices = () => {
-        const voices = speechSynthesis.getVoices();
-        if (!voices.length) return;
-        // Ranked preference: natural/neural voices first
-        const ranks = [
-            v => /Microsoft.*Online.*Natural/i.test(v.name) && /en/i.test(v.lang),
-            v => /(aria|jenny|ana|guy|ryan)/i.test(v.name) && /Microsoft/i.test(v.name),
-            v => /Google.*US/i.test(v.name),
-            v => /Google/i.test(v.name) && /en/i.test(v.lang),
-            v => /(samantha|karen|moira|tessa).*premium/i.test(v.name),
-            v => /(samantha|karen|moira|tessa)/i.test(v.name),
-            v => /(natural|neural|premium|enhanced)/i.test(v.name) && /en/i.test(v.lang),
-            v => /en[-_]US/i.test(v.lang),
-            v => /en[-_]/i.test(v.lang),
-        ];
-        for (const test of ranks) {
-            const m = voices.find(test);
-            if (m) { narratorVoice = m; return; }
-        }
-        narratorVoice = voices[0] || null;
-    };
-    loadVoices();
-    speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    // Pre-create a single Audio element for all narration
+    _narratorAudio = new Audio();
+    _narratorAudio.preload = 'auto';
 }
 
-function narrate(text) {
+function narrate(clipId, subtitle) {
+    subtitle = subtitle || clipId;
     // Show subtitle bar
-    const bar = $('narrator-bar');
-    const textEl = $('narrator-text');
+    const bar = DOM['narrator-bar'] || $('narrator-bar');
+    const textEl = DOM['narrator-text'] || $('narrator-text');
     if (bar && textEl) {
-        textEl.textContent = text;
+        textEl.textContent = subtitle;
         bar.classList.remove('hidden');
         bar.style.animation = 'none';
         void bar.offsetWidth;
@@ -1813,120 +1934,53 @@ function narrate(text) {
     // Duck music while speaking
     duckMusic();
 
-    // Speak aloud
-    if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-
-    // Auto-tune prosody based on content
-    const excited = /!|amazing|wow|fantastic|hooray|superstar|champion|great.job|nailed|awesome|star/i.test(text);
-    const instruct = /copy|hold|freeze|step|stand|reach|spread|crouch|bend|lift|put|run|jump|hug|high.five/i.test(text);
-    if (excited) {
-        utter.rate = 1.0;
-        utter.pitch = 1.25;
-    } else if (instruct) {
-        utter.rate = 0.88;
-        utter.pitch = 1.1;
-    } else {
-        utter.rate = 0.92;
-        utter.pitch = 1.12;
-    }
-    utter.volume = 1;
-    if (narratorVoice) utter.voice = narratorVoice;
-    utter.onend = () => unduckMusic();
-    utter.onerror = () => unduckMusic();
-    speechSynthesis.speak(utter);
+    // Play MP3 clip
+    if (!_narratorAudio) _narratorAudio = new Audio();
+    _narratorAudio.pause();
+    _narratorAudio.src = _NARRATOR_DIR + clipId + '.mp3';
+    _narratorAudio.currentTime = 0;
+    _narratorAudio.onended = () => { unduckMusic(); };
+    _narratorAudio.onerror = () => { unduckMusic(); };
+    _narratorAudio.play().catch(() => { unduckMusic(); });
 }
 
-// ─── BACKGROUND MUSIC (Web Audio procedural) ─
+// ─── BACKGROUND MUSIC (HTML5 Audio – lightweight, no Web Audio overhead) ─
+let _bgAudio = null;
+const _BGM_PATH = 'audio/vivaldi-spring-allegro.mp3';
+const _BGM_VOLUME = 0.35;
+const _BGM_DUCK_VOLUME = 0.10;
+
+// Must be called synchronously from a user-gesture handler (click)
+// so the browser allows playback.
+function _unlockBgAudio() {
+    if (!_bgAudio) {
+        _bgAudio = new Audio(_BGM_PATH);
+        _bgAudio.loop = true;
+        _bgAudio.preload = 'auto';
+    }
+    _bgAudio.volume = 0;
+    _bgAudio.play().then(() => { _bgAudio.pause(); }).catch(() => {});
+}
+
 function startBgMusic() {
-    const ctx = S.audioCtx;
-    if (!ctx || S.bgMusicPlaying) return;
-    if (ctx.state === 'suspended') ctx.resume();
-    S.bgMusicPlaying = true;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.07;
-    gain.connect(ctx.destination);
-    S.bgMusicGain = gain;
-    playMusicLoop();
-}
-
-function stopBgMusic() {
-    S.bgMusicPlaying = false;
-    if (S.bgMusicTimer) { clearTimeout(S.bgMusicTimer); S.bgMusicTimer = null; }
-    if (S.bgMusicGain && S.audioCtx) {
-        try { S.bgMusicGain.gain.linearRampToValueAtTime(0, S.audioCtx.currentTime + 0.5); } catch(_){}
+    if (!_bgAudio) {
+        _bgAudio = new Audio(_BGM_PATH);
+        _bgAudio.loop = true;
     }
+    _bgAudio.currentTime = 0;
+    _bgAudio.volume = _BGM_VOLUME;
+    _bgAudio.play().catch(e => console.warn('BG music play failed:', e));
 }
-
+function stopBgMusic() {
+    if (!_bgAudio) return;
+    _bgAudio.pause();
+    _bgAudio.currentTime = 0;
+}
 function duckMusic() {
-    if (S.bgMusicGain && S.audioCtx)
-        try { S.bgMusicGain.gain.linearRampToValueAtTime(0.025, S.audioCtx.currentTime + 0.2); } catch(_){}
+    if (_bgAudio) _bgAudio.volume = _BGM_DUCK_VOLUME;
 }
 function unduckMusic() {
-    if (S.bgMusicGain && S.audioCtx && S.bgMusicPlaying)
-        try { S.bgMusicGain.gain.linearRampToValueAtTime(0.07, S.audioCtx.currentTime + 0.4); } catch(_){}
-}
-
-function playMusicLoop() {
-    if (!S.bgMusicPlaying || !S.audioCtx) return;
-    const ctx = S.audioCtx;
-    const dest = S.bgMusicGain;
-    const bpm = 128;
-    const eighth = 60 / bpm / 2;
-    const now = ctx.currentTime + 0.05;
-
-    // Cheerful pentatonic melody
-    const melody = [
-        523,659,784,659, 880,784,659,523,
-        587,784,880,784, 659,587,523,0,
-        784,880,1047,880, 784,659,587,659,
-        784,880,784,659, 587,659,523,0
-    ];
-    // Bass line (quarter notes)
-    const bass = [131,131,110,175, 196,165,147,131];
-
-    melody.forEach((freq, i) => {
-        if (!freq) return;
-        const t = now + i * eighth;
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.connect(g); g.connect(dest);
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        g.gain.setValueAtTime(0, t);
-        g.gain.linearRampToValueAtTime(0.25, t + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 0.85);
-        osc.start(t); osc.stop(t + eighth);
-    });
-
-    bass.forEach((freq, i) => {
-        const t = now + i * eighth * 4;
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.connect(g); g.connect(dest);
-        osc.type = 'triangle';
-        osc.frequency.value = freq;
-        g.gain.setValueAtTime(0.18, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 3.8);
-        osc.start(t); osc.stop(t + eighth * 4);
-    });
-
-    // Soft hi-hat rhythm
-    for (let i = 0; i < 32; i += 2) {
-        const t = now + i * eighth;
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.connect(g); g.connect(dest);
-        osc.type = 'square';
-        osc.frequency.value = 6000 + Math.random() * 2000;
-        g.gain.setValueAtTime(0.012, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-        osc.start(t); osc.stop(t + 0.05);
-    }
-
-    const loopLen = melody.length * eighth;
-    S.bgMusicTimer = setTimeout(() => playMusicLoop(), (loopLen - 0.1) * 1000);
+    if (_bgAudio) _bgAudio.volume = _BGM_VOLUME;
 }
 
 // ─── VIDEO RECORDING (active poses) ──────────
@@ -1955,6 +2009,8 @@ function startVideoRecording() {
 function stopVideoRecording() {
     return new Promise(resolve => {
         if (!S.mediaRecorder || S.mediaRecorder.state === 'inactive') {
+            // Stop any lingering capture stream tracks
+            stopCaptureStream();
             S.mediaRecorder = null;
             resolve(null);
             return;
@@ -1963,6 +2019,8 @@ function stopVideoRecording() {
         recorder.onstop = () => {
             const blob = new Blob(S.recordedChunks, { type: 'video/webm' });
             const url = URL.createObjectURL(blob);
+            // Stop capture stream tracks to free media resources
+            stopCaptureStream();
             S.mediaRecorder = null;
             S.recordedChunks = [];
             resolve(url);
@@ -1971,12 +2029,26 @@ function stopVideoRecording() {
     });
 }
 
+function stopCaptureStream() {
+    if (S.mediaRecorder && S.mediaRecorder.stream) {
+        S.mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    }
+}
+
 // ─── SCREENSHOTS & GALLERY ───────────────────
 function captureScreenshot() {
     try {
         const dataUrl = S.canvas.toDataURL('image/jpeg', 0.85);
         S.screenshots.push({ image: dataUrl, pose: currentPose() });
     } catch(e) { console.warn('Screenshot failed:', e); }
+}
+
+function revokeScreenshotUrls() {
+    for (const shot of S.screenshots) {
+        if (shot.video) {
+            try { URL.revokeObjectURL(shot.video); } catch(_){}
+        }
+    }
 }
 
 function buildGallery() {
@@ -2090,7 +2162,7 @@ function downloadCollage() {
     ctx.fillStyle = '#FFD93D';
     ctx.font = 'bold 36px Fredoka One, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('\u2728 Magic Statue Champion! \u2728', cW/2, headerH/2 + 14);
+    ctx.fillText('\u2728 Museum of Fun Art Superstar! \u2728', cW/2, headerH/2 + 14);
 
     // Load and draw images
     let loaded = 0;
@@ -2465,3 +2537,25 @@ function shuffle(a){
 }
 function lerp(a,b,t){ return a+(b-a)*t; }
 function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+// Wait until the current speech utterance finishes (or timeout)
+function waitForSpeech(maxMs) {
+    maxMs = maxMs || 15000;
+    return new Promise(resolve => {
+        if (!_narratorAudio || _narratorAudio.paused || _narratorAudio.ended) { resolve(); return; }
+        const start = Date.now();
+        const onDone = () => { cleanup(); resolve(); };
+        const cleanup = () => {
+            _narratorAudio.removeEventListener('ended', onDone);
+            _narratorAudio.removeEventListener('error', onDone);
+            clearInterval(id);
+        };
+        _narratorAudio.addEventListener('ended', onDone);
+        _narratorAudio.addEventListener('error', onDone);
+        const id = setInterval(() => {
+            if (_narratorAudio.paused || _narratorAudio.ended || Date.now() - start > maxMs) {
+                cleanup(); resolve();
+            }
+        }, 200);
+    });
+}

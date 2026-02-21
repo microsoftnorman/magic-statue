@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#764ba2">
-    <title>✨ Magic Statue! ✨</title>
+    <title>🎨 GitHub Copilot Museum of Fun Art! 🖼️</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
@@ -21,18 +21,12 @@
         </div>
 
         <div class="screen-content title-content">
-            <div class="floating-emojis" aria-hidden="true">
-                <span class="float-emoji" style="--delay:0s; --x:10%">⭐</span>
-                <span class="float-emoji" style="--delay:0.6s; --x:25%">🌟</span>
-                <span class="float-emoji" style="--delay:1.2s; --x:45%">✨</span>
-                <span class="float-emoji" style="--delay:1.8s; --x:65%">🪄</span>
-                <span class="float-emoji" style="--delay:2.4s; --x:85%">⭐</span>
-            </div>
             <h1 class="game-title">
-                <span class="title-line1">✨ Magic ✨</span>
-                <span class="title-line2">Statue</span>
+                <span class="title-line0">GitHub Copilot</span>
+                <span class="title-line1">🎨 Museum of 🖼️</span>
+                <span class="title-line2">Fun Art!</span>
             </h1>
-            <p class="subtitle">Copy the poses and freeze like a statue!</p>
+            <p class="subtitle">Strike a pose and become a living work of art!</p>
 
             <!-- Setup status area -->
             <div class="setup-status" id="setup-status">
@@ -43,6 +37,12 @@
 
             <!-- Player indicator bubbles -->
             <div class="player-bubbles" id="player-bubbles"></div>
+
+            <!-- Pose preview while loading -->
+            <div class="pose-preview" id="pose-preview">
+                <div class="pose-preview-character" id="pose-preview-character"></div>
+                <p class="pose-preview-label" id="pose-preview-label">⭐ Practice your poses!</p>
+            </div>
 
             <!-- Setup tips -->
             <div class="setup-tips hidden" id="setup-tips">
@@ -62,12 +62,12 @@
                 ⏳ Getting Ready…
             </button>
             <div class="title-badges">
-                <span class="badge">👥 1–4 Players</span>
+                <span class="badge">👥 1–4 Artists</span>
                 <span class="badge">📷 Uses Camera</span>
                 <span class="badge">🎂 Ages 3–5</span>
                 <span class="badge">🔒 100% Local</span>
             </div>
-            <p class="demo-credit">This is a demo of <strong>GitHub Copilot</strong> built in an hour on the advice of a 3 and 5 year old</p>
+            <p class="demo-credit">A <strong>GitHub Copilot</strong> creation, built on the advice of a 3 and 5 year old</p>
         </div>
     </div>
 
@@ -183,7 +183,7 @@
                 </div>
             </div>
 
-            <p class="victory-msg">You're a Magic Statue Champion!</p>
+            <p class="victory-msg">You're a Museum of Fun Art Superstar!</p>
             <div id="photo-gallery" class="photo-gallery hidden"></div>
             <button class="btn-big btn-play" onclick="restartGame()">🔄 Play Again!</button>
         </div>
@@ -204,9 +204,6 @@
         <span class="narrator-icon">🗣️</span>
         <span class="narrator-text" id="narrator-text"></span>
     </div>
-
-    <!-- ===== CONFETTI CANVAS (overlay) ===== -->
-    <canvas id="confetti-canvas"></canvas>
 
     <!-- ===== SCRIPTS ===== -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
