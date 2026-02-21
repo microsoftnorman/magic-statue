@@ -7,8 +7,12 @@
     <title>🎨 GitHub Copilot Museum of Fun Art! 🖼️</title>
     <script>
     (function(){
+        var ua = navigator.userAgent;
         var isChromium = !!window.chrome;
-        if (!isChromium) {
+        var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        var isFirefoxDesktop = /Firefox\//.test(ua) && !isIOS;
+        var ok = isChromium || isIOS || !isFirefoxDesktop;
+        if (!ok) {
             document.addEventListener('DOMContentLoaded', function(){
                 document.body.innerHTML =
                     '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#1a0a2e;color:#ffd93d;font-family:sans-serif;text-align:center;padding:20px">' +
